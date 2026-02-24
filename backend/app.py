@@ -1,8 +1,12 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from datetime import datetime
 import random
 import math
+import os
+
+from inference_engine import InferenceEngine
 
 app = FastAPI()
 
@@ -19,7 +23,13 @@ app.add_middleware(
 )
 
 # ==========================================================
-# GLOBAL STATE (Stable Simulation Engine)
+# BOOT: Load ML models once at startup
+# ==========================================================
+
+engine = InferenceEngine()
+
+# ==========================================================
+# GLOBAL STATE
 # ==========================================================
 
 state = {
@@ -32,12 +42,22 @@ state = {
     "trend_memory": [],
 }
 
+# NILM appliance base wattages (used for realistic simulation)
+APPLIANCE_BASE = {
+    "AC": 1200,
+    "Fridge": 250,
+    "Fan": 80,
+    "Washing Machine": 600,
+    "Geyser": 1500,
+    "TV": 150,
+}
+
 # ==========================================================
 # UTILITY FUNCTIONS
 # ==========================================================
 
 def smooth_variation(base, amplitude=50):
-    return base + random.randint(-amplitude, amplitude)
+    return max(0, base + random.randint(-amplitude, amplitude))
 
 def efficiency_score(load):
     return max(40, round(100 - (load / 50), 2))
@@ -54,20 +74,55 @@ def financial_stability(current, predicted):
     diff = abs(predicted - current)
     return max(50, round(100 - (diff / 50), 2))
 
+def build_appliances_from_ml(ml_result: dict, appliance_set: list) -> dict:
+    """
+    Use ML outputs to distribute aggregate load across appliances.
+    - rf_label  → which appliance is dominant right now
+    - hmm_state → 0=low-usage mode, 1=high-usage mode
+    - anomaly_score → if high, spike one appliance
+    """
+    label = ml_result.get("rf_label", "fan")
+    hmm_state = ml_result.get("hmm_state", 0)
+    anomaly = ml_result.get("anomaly_score", 0.0)
+    aggregate = ml_result.get("aggregate", 2000)
+
+    appliances = {}
+    for name in appliance_set:
+        base = APPLIANCE_BASE.get(name, 200)
+        # Scale by HMM state: state 1 = high consumption mode
+        scale = 1.2 if hmm_state == 1 else 0.85
+        appliances[name] = smooth_variation(int(base * scale), 60)
+
+    # Dominant appliance from RF classifier gets boosted to match aggregate
+    if label in appliances:
+        appliances[label] = max(appliances[label], int(aggregate * 0.55))
+
+    # Anomaly spike: if anomaly_score > 0.7, reflect a consumption spike
+    if anomaly > 0.7 and label in appliances:
+        appliances[label] = int(appliances[label] * 1.35)
+
+    return appliances
+
 # ==========================================================
 # PROFESSOR DASHBOARD
 # ==========================================================
 
 @app.get("/dashboard")
 def dashboard():
+    now = datetime.now()
+    hour = now.hour
 
-    appliances = {
-        "AC": smooth_variation(1200, 200),
-        "Fridge": 250,
-        "Fan": 80,
-        "Washing Machine": smooth_variation(600, 150),
-        "Geyser": smooth_variation(1500, 250),
-    }
+    # Simulate a realistic aggregate reading for this hour
+    base_aggregate = 2200 if (6 <= hour <= 9 or 18 <= hour <= 23) else 900
+    aggregate = smooth_variation(base_aggregate, 200)
+
+    # Run through ML engine
+    ml = engine.predict(aggregate, now.isoformat())
+
+    appliances = build_appliances_from_ml(
+        ml,
+        ["AC", "Fridge", "Fan", "Washing Machine", "Geyser"]
+    )
 
     total_load = sum(appliances.values())
 
@@ -76,15 +131,24 @@ def dashboard():
         state["trend_memory"].pop(0)
 
     current_bill = round(total_load * 0.12, 2)
-    predicted_bill = round(total_load * 0.13, 2)
+    predicted_bill = round(ml["lstm_forecast"] * 0.12, 2) if ml["lstm_forecast"] > 0 else round(total_load * 0.13, 2)
 
     return {
-        "timestamp": datetime.now(),
+        "timestamp": now,
         "appliances": appliances,
         "total_load": total_load,
         "monthly_bill_current": current_bill,
         "monthly_bill_predicted": predicted_bill,
         "trend_memory": state["trend_memory"],
+        # ML insights exposed to frontend
+        "ml": {
+            "dominant_appliance": ml["rf_label"],
+            "rf_confidence": round(ml["rf_confidence"] * 100, 1),
+            "anomaly_score": round(ml["anomaly_score"] * 100, 1),
+            "hmm_state": "High Usage" if ml["hmm_state"] == 1 else "Low Usage",
+            "lstm_forecast_w": round(ml["lstm_forecast"], 1),
+            "next_hour_usage_kwh": round(ml["gb_usage_next"] / 1000, 3),
+        }
     }
 
 # ==========================================================
@@ -93,20 +157,22 @@ def dashboard():
 
 @app.get("/consumer-dashboard")
 def consumer_dashboard(mode: str = Query("postpaid")):
+    now = datetime.now()
+    hour = now.hour
 
-    base = state["consumer_base_load"]
+    base_aggregate = 1800 if (18 <= hour <= 23) else 800
+    aggregate = smooth_variation(base_aggregate, 150)
 
-    appliances = {
-        "AC": smooth_variation(1100, 150),
-        "Fridge": 250,
-        "Fan": 80,
-        "TV": 150,
-        "Geyser": smooth_variation(1400, 200),
-    }
+    ml = engine.predict(aggregate, now.isoformat())
 
-    # Apply remote shutdown simulation
-    for device, status in state["shutdown_devices"].items():
-        if status and device in appliances:
+    appliances = build_appliances_from_ml(
+        ml,
+        ["AC", "Fridge", "Fan", "TV", "Geyser"]
+    )
+
+    # Apply remote shutdown
+    for device, is_off in state["shutdown_devices"].items():
+        if is_off and device in appliances:
             appliances[device] = 0
 
     total_load = sum(appliances.values())
@@ -115,31 +181,22 @@ def consumer_dashboard(mode: str = Query("postpaid")):
     daily_units = total_load / 1000
     daily_cost = daily_units * tariff
 
-    day = datetime.now().day
+    day = now.day
     current_bill = round(daily_cost * day, 2)
     predicted_bill = monthly_projection(current_bill, day)
 
-    # Prepaid logic
     if mode == "prepaid":
         state["consumer_balance"] -= daily_cost * 0.1
 
     prepaid_balance = round(state["consumer_balance"], 2)
+    days_left = round(prepaid_balance / daily_cost, 1) if daily_cost > 0 else 30
 
-    days_left = (
-        round(prepaid_balance / daily_cost, 1)
-        if daily_cost > 0 else 30
-    )
-
-    cutoff_risk = "SAFE"
     if prepaid_balance < 100:
         cutoff_risk = "CRITICAL"
     elif prepaid_balance < 300:
         cutoff_risk = "WARNING"
-
-    eff = efficiency_score(total_load)
-    carbon = carbon_estimate(total_load)
-
-    stability = financial_stability(current_bill, predicted_bill)
+    else:
+        cutoff_risk = "SAFE"
 
     return {
         "mode": mode,
@@ -147,22 +204,47 @@ def consumer_dashboard(mode: str = Query("postpaid")):
         "total_load": total_load,
         "current_bill": current_bill,
         "predicted_end_month": predicted_bill,
-        "efficiency_score": eff,
-        "carbon_footprint": carbon,
-        "financial_stability": stability,
+        "efficiency_score": efficiency_score(total_load),
+        "carbon_footprint": carbon_estimate(total_load),
+        "financial_stability": financial_stability(current_bill, predicted_bill),
         "prepaid_balance": prepaid_balance,
         "days_left": days_left,
         "cutoff_risk": cutoff_risk,
+        "ml": {
+            "dominant_appliance": ml["rf_label"],
+            "rf_confidence": round(ml["rf_confidence"] * 100, 1),
+            "anomaly_score": round(ml["anomaly_score"] * 100, 1),
+            "hmm_state": "High Usage" if ml["hmm_state"] == 1 else "Low Usage",
+            "lstm_forecast_w": round(ml["lstm_forecast"], 1),
+        }
     }
 
 # ==========================================================
 # REMOTE DEVICE CONTROL
 # ==========================================================
 
+class DeviceToggle(BaseModel):
+    device: str
+    status: bool
+
 @app.post("/toggle-device")
-def toggle_device(device: str, status: bool):
-    state["shutdown_devices"][device] = status
-    return {"device": device, "status": status}
+def toggle_device(body: DeviceToggle):
+    state["shutdown_devices"][body.device] = body.status
+    return {"device": body.device, "status": body.status}
+
+# ==========================================================
+# NILM PREDICT  (direct ML endpoint)
+# ==========================================================
+
+class NilmRequest(BaseModel):
+    aggregate: float
+    timestamp: str = None
+
+@app.post("/nilm-predict")
+def nilm_predict(body: NilmRequest):
+    ts = body.timestamp or datetime.now().isoformat()
+    result = engine.predict(body.aggregate, ts)
+    return result
 
 # ==========================================================
 # INDUSTRIAL DASHBOARD
@@ -170,23 +252,23 @@ def toggle_device(device: str, status: bool):
 
 @app.get("/industrial-dashboard")
 def industrial_dashboard():
+    now = datetime.now()
 
     contracted_demand = 600
     tariff_per_kva = 350
     transformer_capacity = 800
 
-    # ---------- CURRENT DEMAND ----------
-    current_demand = random.randint(480, 720)
-    peak_demand = max(current_demand, random.randint(550, 750))
+    # Use ML engine with industrial-scale aggregate
+    aggregate = smooth_variation(560, 120)
+    ml = engine.predict(aggregate, now.isoformat())
 
-    # ---------- PENALTY ----------
+    current_demand = int(aggregate)
+    peak_demand = max(current_demand, smooth_variation(current_demand, 80))
+
     excess_kva = max(0, peak_demand - contracted_demand)
     penalty = excess_kva * tariff_per_kva
 
-    # ---------- TRANSFORMER ----------
-    transformer_load_percent = round(
-        (current_demand / transformer_capacity) * 100, 2
-    )
+    transformer_load_percent = round((current_demand / transformer_capacity) * 100, 2)
 
     if transformer_load_percent > 90:
         overload_risk = "HIGH"
@@ -195,64 +277,51 @@ def industrial_dashboard():
     else:
         overload_risk = "LOW"
 
-    # ---------- PEAK FORECAST (FIXED) ----------
+    # LSTM-guided forecast: use lstm_forecast as the next-interval anchor
     forecast = []
     base = current_demand
+    lstm_anchor = ml["lstm_forecast"] if ml["lstm_forecast"] > 0 else current_demand
 
     for i in range(6):
-        base = base + random.randint(-10, 25)
+        # Blend random walk with LSTM prediction
+        blend = base * 0.4 + lstm_anchor * 0.6
+        base = blend + random.randint(-15, 20)
         forecast.append({
             "interval": i,
-            "demand": max(450, base)
+            "demand": round(max(450, base), 1)
         })
 
-    # ---------- PEAK SHAVING AI ----------
     if excess_kva > 0:
         suggested_load_shift = round(excess_kva * 0.8, 2)
-        estimated_savings = suggested_load_shift * tariff_per_kva
+        estimated_savings = round(suggested_load_shift * tariff_per_kva, 2)
     else:
         suggested_load_shift = 0
         estimated_savings = 0
 
-    # ---------- POWER FACTOR ----------
     power_factor = round(random.uniform(0.82, 0.99), 2)
+    pf_penalty = round((0.9 - power_factor) * 15000, 2) if power_factor < 0.9 else 0
 
-    if power_factor < 0.9:
-        pf_penalty = round((0.9 - power_factor) * 15000, 2)
-    else:
-        pf_penalty = 0
-
-    # ---------- PRODUCTION ----------
     units_produced = random.randint(800, 1500)
     total_energy_kwh = round(current_demand * 0.75, 2)
+    energy_cost_per_unit = round(total_energy_kwh / units_produced, 3) if units_produced > 0 else 0
 
-    if units_produced > 0:
-        energy_cost_per_unit = round(
-            total_energy_kwh / units_produced, 3
-        )
-    else:
-        energy_cost_per_unit = 0
-
-    # ---------- DOWNTIME ML ----------
-    vibration_index = round(random.uniform(0.6, 1.5), 2)
-
-    if vibration_index > 1.3:
+    # Use anomaly_score from ML to drive downtime risk
+    anomaly = ml["anomaly_score"]
+    if anomaly > 0.7:
         downtime_risk = "HIGH"
-    elif vibration_index > 1.1:
+    elif anomaly > 0.4:
         downtime_risk = "MODERATE"
     else:
         downtime_risk = "LOW"
 
-    # ---------- PHASE BALANCE ----------
+    vibration_index = round(0.6 + anomaly * 0.9, 2)
+
     phase_r = random.randint(180, 250)
     phase_y = random.randint(160, 240)
     phase_b = random.randint(170, 260)
-
     imbalance = round(
-        (max(phase_r, phase_y, phase_b) -
-         min(phase_r, phase_y, phase_b)) /
-        max(phase_r, phase_y, phase_b) * 100,
-        2
+        (max(phase_r, phase_y, phase_b) - min(phase_r, phase_y, phase_b)) /
+        max(phase_r, phase_y, phase_b) * 100, 2
     )
 
     return {
@@ -271,14 +340,15 @@ def industrial_dashboard():
         "units_produced": units_produced,
         "energy_cost_per_unit": energy_cost_per_unit,
         "downtime_risk": downtime_risk,
-        "phases": {
-            "R": phase_r,
-            "Y": phase_y,
-            "B": phase_b
-        },
-        "imbalance_percent": imbalance
+        "vibration_index": vibration_index,
+        "phases": {"R": phase_r, "Y": phase_y, "B": phase_b},
+        "imbalance_percent": imbalance,
+        "ml": {
+            "anomaly_score": round(anomaly * 100, 1),
+            "hmm_state": "High Load" if ml["hmm_state"] == 1 else "Normal Load",
+            "lstm_next_kw": round(ml["lstm_forecast"] / 1000, 2),
+        }
     }
-
 
 # ==========================================================
 # GRID DASHBOARD
@@ -286,26 +356,39 @@ def industrial_dashboard():
 
 @app.get("/grid-dashboard")
 def grid_dashboard():
+    now = datetime.now()
 
     feeders = []
     total_loss = 0
 
     for i in range(1, 11):
+        feeder_aggregate = smooth_variation(state["grid_feeder_base"] * 22, 300)
+        ml = engine.predict(feeder_aggregate, now.isoformat())
+
         load = smooth_variation(state["grid_feeder_base"], 15)
         loss = round(random.uniform(5, 15), 2)
+
+        # Anomaly from ML elevates risk assessment
+        anomaly = ml["anomaly_score"]
+        if load > 95 or anomaly > 0.7:
+            risk = "HIGH"
+        elif load > 80 or anomaly > 0.4:
+            risk = "MODERATE"
+        else:
+            risk = "LOW"
 
         feeders.append({
             "name": f"Feeder-{i}",
             "load_percent": load,
             "loss_percent": loss,
-            "risk": "HIGH" if load > 95 else "MODERATE" if load > 80 else "LOW"
+            "risk": risk,
+            "anomaly_score": round(anomaly * 100, 1),
         })
 
         total_loss += loss
 
     atc_loss = round(total_loss / 10, 2)
-
-    surge_zone = random.choice(feeders)
+    surge_zone = max(feeders, key=lambda f: f["load_percent"])
 
     return {
         "feeders": feeders,
@@ -318,33 +401,72 @@ def grid_dashboard():
     }
 
 # ==========================================================
-# MODEL METRICS
+# MODEL METRICS  (real evaluation against dataset)
 # ==========================================================
 
 @app.get("/model-metrics")
 def model_metrics():
+    import pandas as pd
+    import numpy as np
+    from sklearn.metrics import (
+        accuracy_score, precision_score,
+        recall_score, f1_score, confusion_matrix, roc_curve, auc
+    )
+    from sklearn.preprocessing import label_binarize
 
-    confusion = [
-        [45, 5, 2],
-        [4, 50, 3],
-        [1, 6, 48]
-    ]
+    base_dir = os.path.dirname(__file__)
+    dataset_path = os.path.join(base_dir, "dataset", "uk_dale.csv")
 
-    roc = [
-        {"fpr": 0.0, "tpr": 0.0},
-        {"fpr": 0.1, "tpr": 0.6},
-        {"fpr": 0.2, "tpr": 0.75},
-        {"fpr": 0.3, "tpr": 0.85},
-        {"fpr": 0.4, "tpr": 0.92},
-        {"fpr": 1.0, "tpr": 1.0},
-    ]
+    if not os.path.exists(dataset_path):
+        return {"error": "Dataset not found. Run generate_dataset.py first."}
+
+    df = pd.read_csv(dataset_path)
+    df["delta"] = df["aggregate"].diff().fillna(0)
+    df["hour"] = pd.to_datetime(df["timestamp"]).dt.hour
+
+    X = df[["aggregate", "delta", "hour"]]
+    y_true = df["label"]
+
+    y_pred = engine.rf.predict(X)
+    y_proba = engine.rf.predict_proba(X)
+
+    classes = list(engine.rf.classes_)
+    cm = confusion_matrix(y_true, y_pred, labels=classes).tolist()
+
+    acc = round(accuracy_score(y_true, y_pred), 4)
+    prec = round(precision_score(y_true, y_pred, average="weighted", zero_division=0), 4)
+    rec = round(recall_score(y_true, y_pred, average="weighted", zero_division=0), 4)
+    f1 = round(f1_score(y_true, y_pred, average="weighted", zero_division=0), 4)
+
+    # ROC (macro OvR)
+    y_bin = label_binarize(y_true, classes=classes)
+    roc_points = []
+    auc_scores = []
+
+    for i in range(len(classes)):
+        if y_bin[:, i].sum() == 0:
+            continue
+        fpr, tpr, _ = roc_curve(y_bin[:, i], y_proba[:, i])
+        auc_val = auc(fpr, tpr)
+        auc_scores.append(auc_val)
+        # Downsample to 10 points for frontend
+        idx = np.linspace(0, len(fpr) - 1, min(10, len(fpr)), dtype=int)
+        for j in idx:
+            roc_points.append({
+                "class": classes[i],
+                "fpr": round(float(fpr[j]), 3),
+                "tpr": round(float(tpr[j]), 3),
+            })
+
+    mean_auc = round(float(np.mean(auc_scores)), 4) if auc_scores else 0.0
 
     return {
-        "accuracy": 0.94,
-        "precision": 0.91,
-        "recall": 0.92,
-        "f1": 0.915,
-        "auc": 0.96,
-        "confusion": confusion,
-        "roc": roc
+        "accuracy": acc,
+        "precision": prec,
+        "recall": rec,
+        "f1": f1,
+        "auc": mean_auc,
+        "classes": classes,
+        "confusion": cm,
+        "roc": roc_points,
     }
