@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bharat-NILM | Energy Intelligence</title>
+
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- jsPDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+
+<body>
+
+<header>
+  <h1>Bharat-NILM</h1>
+  <p>Live appliance-level energy intelligence</p>
+
+  <div class="top-controls">
+    <label>Inference Model</label>
+    <select id="modelSelector">
+      <option value="ml_output_rf.json">Random Forest</option>
+      <option value="ml_output_hmm.json">HMM (Smoothed)</option>
+      <option value="ml_output_rule.json">Rule-Based</option>
+    </select>
+
+    <button id="exportPDF">Export Report (PDF)</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- KPIs -->
+  <section class="kpis">
+    <div class="kpi tooltip">
+      <span id="totalEvents">–</span>
+      <label>Total Events</label>
+      <div class="tooltip-text">Detected power change events</div>
+    </div>
+
+    <div class="kpi tooltip">
+      <span id="topAppliance">–</span>
+      <label>Top Appliance</label>
+      <div class="tooltip-text">Most active appliance</div>
+    </div>
+
+    <div class="kpi tooltip">
+      <span id="avgConfidence">–</span>
+      <label>Avg Confidence</label>
+      <div class="tooltip-text">Mean ML confidence</div>
+    </div>
+
+    <div class="kpi tooltip">
+      <span id="monthlyBill">–</span>
+      <label>Predicted Monthly Bill (₹)</label>
+      <div class="tooltip-text">Estimated electricity bill</div>
+    </div>
+  </section>
+
+  <!-- Charts -->
+  <section class="charts">
+    <div class="panel">
+      <h3>Appliance-wise Energy Consumption</h3>
+      <canvas id="energyChart"></canvas>
+    </div>
+
+    <div class="panel">
+      <h3>Usage Pattern (Time of Day)</h3>
+      <canvas id="usageChart"></canvas>
+    </div>
+  </section>
+
+  <section class="charts">
+    <div class="panel">
+      <h3>Appliance Distribution</h3>
+      <canvas id="applianceChart"></canvas>
+    </div>
+
+    <div class="panel">
+      <h3>Live Event Timeline</h3>
+      <canvas id="timelineChart"></canvas>
+    </div>
+  </section>
+
+  <!-- Recommendations -->
+  <section class="panel">
+    <h3>Energy Saving Recommendations</h3>
+    <ul id="recommendations"></ul>
+  </section>
+
+  <!-- Event Table -->
+  <section class="table-panel">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Appliance</th>
+          <th>Δ Power (W)</th>
+          <th>Hour</th>
+          <th>Confidence</th>
+        </tr>
+      </thead>
+      <tbody id="eventTable"></tbody>
+    </table>
+  </section>
+
+</main>
+
+<footer>
+  IISER Hackathon · Bharat-NILM
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
