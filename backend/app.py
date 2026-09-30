@@ -200,6 +200,30 @@ class SimulationMode(BaseModel):
 # EMS API  (new, rich endpoints)
 # ===========================================================================
 
+@app.get("/")
+def root():
+    return {
+        "status": "online",
+        "service": "BHARAT-NILM Polar EMS Backend",
+        "version": "2.0.0",
+        "docs": "/docs",
+        "endpoints": {
+            "meta": "/api/meta",
+            "snapshot": "/api/snapshot",
+            "stream": "/api/stream",
+            "station_dashboard": "/station-dashboard",
+            "renewable_dashboard": "/renewable-dashboard",
+            "fuel_dashboard": "/fuel-dashboard",
+            "health": "/ping",
+        }
+    }
+
+
+@app.get("/ping")
+def ping():
+    return {"status": "ok", "service": "bharat-nilm-backend"}
+
+
 @app.get("/api/meta")
 def api_meta():
     return {"scenarios": {k: v["desc"] for k, v in SCENARIOS.items()}, "fault_kinds": list(FAULT_KINDS)}
