@@ -3,29 +3,30 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { NotificationBell } from "./NotificationBell"
+import { useNotifications } from "./NotificationContext"
 
 const LINKS = [
   { href: "/",           label: "Home",       color: "#00e5ff" },
-  { href: "/professor",  label: "Research",   color: "#00e5ff" },
-  { href: "/user",       label: "Consumer",   color: "#39ff14" },
-  { href: "/industrial", label: "Industrial", color: "#ffb300" },
-  { href: "/grid",       label: "DISCOM",     color: "#e040fb" },
-  { href: "/infer",      label: "⚡ Infer",   color: "#ff9f00" },
-  { href: "/devices",    label: "🔌 Devices", color: "#39ff14" },
+  { href: "/user",       label: "Station Ops", color: "#39ff14" },
+  { href: "/industrial", label: "Renewable & Microgrid", color: "#ffb300" },
+  { href: "/grid",       label: "Fuel & Logistics", color: "#e040fb" },
+  { href: "/professor",  label: "Research/Admin", color: "#00e5ff" },
+  { href: "/infer",      label: "⚡ Live Playground", color: "#ff9f00" },
+  { href: "/devices",    label: "🔌 Assets", color: "#39ff14" },
 ]
 
 export function GlobalNav() {
   const pathname = usePathname()
+  const { blizzardMode, polarNight, setBlizzardMode, setPolarNight } = useNotifications()
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=DM+Sans:wght@400;500&display=swap');
         .gnav-link { transition: color 0.2s, border-color 0.2s; }
         .gnav-link:hover { opacity: 0.85; }
       `}</style>
 
-      <nav style={{
+      <nav className="nilm-3d-panel" style={{
         position: "sticky", top: 0, zIndex: 1000,
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "0 32px",
@@ -34,6 +35,9 @@ export function GlobalNav() {
         borderBottom: "1px solid rgba(0,229,255,0.08)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
+        fontFamily: '"Segoe UI", Arial, Helvetica, sans-serif',
+        transform: "perspective(1200px) rotateX(0deg)",
+        boxShadow: "0 12px 28px rgba(0, 229, 255, 0.06), inset 0 -1px 0 rgba(0, 229, 255, 0.18)",
       }}>
 
         {/* Logo */}
@@ -64,6 +68,7 @@ export function GlobalNav() {
                 color: active ? l.color : "rgba(200,219,232,0.45)",
                 background: active ? l.color + "12" : "transparent",
                 border: `1px solid ${active ? l.color + "30" : "transparent"}`,
+                fontFamily: '"Segoe UI", Arial, Helvetica, sans-serif',
               }}>
                 {l.label}
               </Link>
@@ -73,6 +78,20 @@ export function GlobalNav() {
 
         {/* Right side: live dot + bell */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button title="Toggle blizzard simulation" onClick={() => setBlizzardMode(!blizzardMode)} style={{
+              border: `1px solid ${blizzardMode ? "#ff5252" : "rgba(200,219,232,0.18)"}`,
+              background: blizzardMode ? "rgba(255,82,82,0.16)" : "transparent",
+              color: blizzardMode ? "#ff5252" : "rgba(200,219,232,0.65)",
+              borderRadius: 6, padding: "4px 7px", cursor: "pointer", fontSize: 10,
+            }}>BLIZZARD</button>
+            <button title="Toggle polar-night simulation" onClick={() => setPolarNight(!polarNight)} style={{
+              border: `1px solid ${polarNight ? "#b388ff" : "rgba(200,219,232,0.18)"}`,
+              background: polarNight ? "rgba(179,136,255,0.16)" : "transparent",
+              color: polarNight ? "#b388ff" : "rgba(200,219,232,0.65)",
+              borderRadius: 6, padding: "4px 7px", cursor: "pointer", fontSize: 10,
+            }}>POLAR NIGHT</button>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{
               width: 6, height: 6, borderRadius: "50%",

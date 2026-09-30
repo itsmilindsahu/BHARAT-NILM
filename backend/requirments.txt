@@ -1,0 +1,31 @@
+# BHARAT-NILM Polar EMS — backend requirements
+# Replaces the old simple mock with the SIH production engine
+
+# Core ML / scientific
+numpy>=2.0
+pandas>=2.2
+scipy>=1.13
+scikit-learn>=1.5
+xgboost>=2.0
+joblib>=1.4
+
+# Optimizer (MILP — bundled, no licence)
+ortools>=9.10
+
+# Web framework
+fastapi>=0.110
+uvicorn[standard]>=0.30
+pydantic>=2.6
+
+# Config
+PyYAML>=6.0
+
+# Optional connectivity
+httpx>=0.27
+paho-mqtt>=2.0
+
+# Old backend extras
+reportlab>=4.0
+
+# Testing
+pytest>=8.0

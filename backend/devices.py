@@ -35,33 +35,25 @@ PLUGS: dict[str, dict] = {}
 
 # Seed with 5 demo plugs so the page isn't empty on first load
 SEED_PLUGS = [
-    {"name": "Living Room AC",   "appliance": "ac",              "room": "Living Room", "on": True  },
-    {"name": "Kitchen Fridge",   "appliance": "fridge",          "room": "Kitchen",     "on": True  },
-    {"name": "Bedroom Fan",      "appliance": "fan",             "room": "Bedroom",     "on": True  },
-    {"name": "TV Unit",          "appliance": "tv",              "room": "Living Room", "on": False },
-    {"name": "Bathroom Geyser",  "appliance": "geyser",          "room": "Bathroom",    "on": False },
+    {"name": "Lab Module", "load_channel": "labs", "zone": "Lab", "on": True},
+    {"name": "Comms Backup", "load_channel": "comms", "zone": "Comms", "on": True},
+    {"name": "Non-Essential Heating Zone", "load_channel": "heating", "zone": "Dorm", "on": True},
+    {"name": "Garage/Vehicle Bay", "load_channel": "garage", "zone": "Garage", "on": False},
 ]
 
-APPLIANCE_BASE_WATTS = {
-    "ac":              1200,
-    "fridge":          150,
-    "fan":             75,
-    "tv":              180,
-    "geyser":          1500,
-    "washing_machine": 650,
-    "microwave":       1000,
-    "light":           20,
-    "other":           100,
+LOAD_CHANNEL_BASE_WATTS = {
+    "heating": 1200, "life_support": 250, "comms": 80,
+    "labs": 600, "garage": 450, "other": 100,
 }
 
-def _make_plug(name: str, appliance: str, room: str, on: bool) -> dict:
+def _make_switch(name: str, load_channel: str, zone: str, on: bool) -> dict:
     pid = str(uuid.uuid4())[:8]
-    base = APPLIANCE_BASE_WATTS.get(appliance, 100)
+    base = LOAD_CHANNEL_BASE_WATTS.get(load_channel, 100)
     return {
         "id":           pid,
         "name":         name,
-        "appliance":    appliance,
-        "room":         room,
+        "load_channel": load_channel,
+        "zone":         zone,
         "on":           on,
         "created_at":   datetime.now().isoformat(),
         # Energy tracking
@@ -82,7 +74,7 @@ def _make_plug(name: str, appliance: str, room: str, on: bool) -> dict:
 
 # Seed on startup
 for s in SEED_PLUGS:
-    p = _make_plug(s["name"], s["appliance"], s["room"], s["on"])
+    p = _make_switch(s["name"], s["load_channel"], s["zone"], s["on"])
     PLUGS[p["id"]] = p
 
 TARIFF = 6.5  # ₹/kWh
@@ -96,7 +88,7 @@ def _enrich(plug: dict) -> dict:
 
 def _tick_plug(plug: dict):
     """Simulate one polling tick (~3s of real time)."""
-    base = APPLIANCE_BASE_WATTS.get(plug["appliance"], 100)
+    base = LOAD_CHANNEL_BASE_WATTS.get(plug["load_channel"], 100)
     if plug["on"]:
         # Slight realistic variance
         t = len(plug["history"])
@@ -136,13 +128,13 @@ def _tick_plug(plug: dict):
 # ─── Request models ────────────────────────────────────────
 class CreatePlug(BaseModel):
     name:      str
-    appliance: str = "other"
-    room:      str = "Home"
+    load_channel: str = "other"
+    zone:         str = "Dorm"
 
 class UpdatePlug(BaseModel):
     name:      Optional[str] = None
-    appliance: Optional[str] = None
-    room:      Optional[str] = None
+    load_channel: Optional[str] = None
+    zone:         Optional[str] = None
     on:        Optional[bool] = None
 
 class SetSchedule(BaseModel):
@@ -163,7 +155,7 @@ def list_plugs():
 
 @router.post("")
 def create_plug(body: CreatePlug):
-    p = _make_plug(body.name, body.appliance, body.room, on=False)
+    p = _make_switch(body.name, body.load_channel, body.zone, on=False)
     PLUGS[p["id"]] = p
     return _enrich(p)
 
@@ -182,8 +174,8 @@ def update_plug(pid: str, body: UpdatePlug):
         raise HTTPException(404, "Plug not found")
     p = PLUGS[pid]
     if body.name      is not None: p["name"]      = body.name
-    if body.appliance is not None: p["appliance"]  = body.appliance
-    if body.room      is not None: p["room"]       = body.room
+    if body.load_channel is not None: p["load_channel"] = body.load_channel
+    if body.zone is not None: p["zone"] = body.zone
     if body.on        is not None:
         p["on"] = body.on
         if not body.on:

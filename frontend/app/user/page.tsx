@@ -1,1130 +1,487 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import dynamic from "next/dynamic"
-import {
-  AreaChart, Area, PieChart, Pie, Cell,
-  CartesianGrid, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, ReferenceLine
-} from "recharts"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { SimulationBanner } from "../components/SimulationBanner"
+import { StationScene } from "../components/StationScene"
+import { API_URL } from "../lib/api"
 
-const HouseScene = dynamic(() => import("../components/HouseScene"), { ssr: false })
-
-// ─── Power Breakdown Table ────────────────────────────────────────────
-function PowerBreakdownTable({ data }: { data: Record<string, any> }) {
-  if (!data) return null
-  const entries = Object.entries(data)
-  return (
-    <SectionCard style={{ marginBottom: 24 }}>
-      <SectionTitle>⚡ Reactive & Apparent Power per Appliance</SectionTitle>
-      <p style={{ fontSize: 12, color: C.muted, marginTop: -14, marginBottom: 16, lineHeight: 1.6 }}>
-        Low power factor (PF) = wasted reactive power — critical for accurate AC/motor classification.
-      </p>
-      <div style={{ overflowX: "auto" as const }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" as const, fontSize: 12 }}>
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["Appliance", "Active (W)", "Apparent (kVA)", "Reactive (VAr)", "Power Factor", "PF Quality"].map(h => (
-                <th key={h} style={{ padding: "8px 12px", textAlign: "left" as const, color: C.muted, fontWeight: 600, letterSpacing: "0.06em", fontSize: 10 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map(([name, d]: any, i) => {
-              const pfColor = d.pf > 0.9 ? C.green : d.pf > 0.8 ? C.amber : C.red
-              const pfLabel = d.pf > 0.9 ? "Excellent" : d.pf > 0.8 ? "Acceptable" : "Poor — High VAr"
-              return (
-                <tr key={name} style={{ borderBottom: `1px solid rgba(0,229,255,0.05)`, background: i % 2 === 0 ? "rgba(0,0,0,0.1)" : "transparent" }}>
-                  <td style={{ padding: "10px 12px", color: "#fff", fontWeight: 600 }}>{name}</td>
-                  <td style={{ padding: "10px 12px", fontFamily: "'Orbitron',monospace", color: C.accent }}>{d.w}W</td>
-                  <td style={{ padding: "10px 12px", fontFamily: "'Orbitron',monospace", color: C.purple }}>{d.kva} VA</td>
-                  <td style={{ padding: "10px 12px", fontFamily: "'Orbitron',monospace", color: C.amber }}>{d.var} VAr</td>
-                  <td style={{ padding: "10px 12px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ flex: 1, height: 6, background: "rgba(255,255,255,0.06)", borderRadius: 3 }}>
-                        <div style={{ height: "100%", width: `${d.pf * 100}%`, background: pfColor, borderRadius: 3, transition: "width 0.6s" }} />
-                      </div>
-                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: 11, color: pfColor }}>{d.pf.toFixed(2)}</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: "10px 12px" }}><Badge label={pfLabel} color={pfColor} /></td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
-  )
-}
-
-// ─── Vampire Load Time-of-Day Breakdown ─────────────────────────────
-function VampireTOD({ data }: { data: any[] }) {
-  if (!data) return null
-  const DEVICE_COLORS: Record<string, string> = {
-    Fridge: C.accent, Router: C.green, STB: C.purple,
-    Chargers: C.amber, "TV Standby": C.red, TV: C.red, "AC Standby": "#00bcd4",
-  }
-  const currentHour = new Date().getHours()
-  const activeBandIdx = currentHour < 6 ? 0 : currentHour < 10 ? 1 : currentHour < 18 ? 2 : 3
-  return (
-    <SectionCard style={{ marginBottom: 24 }}>
-      <SectionTitle>🧛 Standby / Vampire Load by Time-of-Day</SectionTitle>
-      <p style={{ fontSize: 12, color: C.muted, marginTop: -14, marginBottom: 20, lineHeight: 1.6 }}>
-        Which devices are silently drawing power in each time window — and how much.
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-        {data.map((slot, idx) => (
-          <div key={idx} style={{
-            background: idx === activeBandIdx ? "rgba(0,229,255,0.06)" : "rgba(0,0,0,0.2)",
-            border: `1px solid ${idx === activeBandIdx ? C.accent + "50" : C.border}`,
-            borderRadius: 12, padding: "16px",
-            boxShadow: idx === activeBandIdx ? `0 0 12px ${C.accent}18` : "none",
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div style={{ fontSize: 10, color: idx === activeBandIdx ? C.accent : C.muted, fontWeight: 700, letterSpacing: "0.08em" }}>
-                {slot.band} {idx === activeBandIdx && "← NOW"}
-              </div>
-              <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 14, fontWeight: 700, color: C.red }}>
-                {slot.total}W
-              </div>
-            </div>
-            {Object.entries(slot.devices).map(([dev, w]: any) => (
-              <div key={dev} style={{ marginBottom: 6 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                  <span style={{ fontSize: 11, color: C.text }}>{dev}</span>
-                  <span style={{ fontSize: 11, color: DEVICE_COLORS[dev] || C.muted, fontFamily: "'Orbitron',monospace" }}>{w}W</span>
-                </div>
-                <div style={{ height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2 }}>
-                  <div style={{ height: "100%", width: `${Math.min((w / slot.total) * 100, 100)}%`, background: DEVICE_COLORS[dev] || C.muted, borderRadius: 2, transition: "width 0.5s" }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
-    </SectionCard>
-  )
-}
-
-// ─── Duty Cycle Histogram ────────────────────────────────────────────
-function DutyCycleHistogram({ data }: { data: Record<string, any> }) {
-  if (!data) return null
-  const entries = Object.entries(data)
-  const colors: Record<string, string> = { AC: C.accent, Fridge: C.purple, Fan: C.green, TV: C.amber, Geyser: C.red }
-  const maxHours = 24
-  return (
-    <SectionCard style={{ marginBottom: 24 }}>
-      <SectionTitle>⏱ Appliance Duty Cycle & Usage Duration</SectionTitle>
-      <p style={{ fontSize: 12, color: C.muted, marginTop: -14, marginBottom: 20, lineHeight: 1.6 }}>
-        Hours/day each appliance runs today vs 7-day average. High duty cycle = high cost impact.
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
-        {entries.map(([name, d]: any) => {
-          const color = colors[name] || C.accent
-          const todayPct = (d.hours_today / maxHours) * 100
-          const avgPct   = (d.avg_7d / maxHours) * 100
-          return (
-            <div key={name} style={{ background: "rgba(0,0,0,0.25)", border: `1px solid ${color}25`, borderRadius: 12, padding: "16px 18px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{name}</span>
-                <span style={{ fontSize: 10, color: C.muted }}>{d.on_cycles} cycles</span>
-              </div>
-              {/* Today */}
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, color: C.muted }}>Today</span>
-                  <span style={{ fontSize: 11, fontFamily: "'Orbitron',monospace", color }}>{d.hours_today}h</span>
-                </div>
-                <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4 }}>
-                  <div style={{ height: "100%", width: `${todayPct}%`, background: `linear-gradient(90deg,${color},${color}88)`, borderRadius: 4, transition: "width 0.6s", boxShadow: `0 0 8px ${color}44` }} />
-                </div>
-              </div>
-              {/* 7-day avg */}
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, color: C.muted }}>7d Avg</span>
-                  <span style={{ fontSize: 11, fontFamily: "'Orbitron',monospace", color: C.muted }}>{d.avg_7d}h</span>
-                </div>
-                <div style={{ height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 4 }}>
-                  <div style={{ height: "100%", width: `${avgPct}%`, background: `rgba(200,219,232,0.3)`, borderRadius: 4, transition: "width 0.6s" }} />
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </SectionCard>
-  )
-}
-
-// ─── Time-of-Use Cost Optimisation ──────────────────────────────────
-function TouOptimiser({ tou }: { tou: any }) {
-  if (!tou) return null
-  const bandColor: Record<string, string> = { peak: C.red, normal: C.amber, off_peak: C.green }
-  const color = bandColor[tou.band] || C.accent
-  const scoreAngle = (tou.score / 100) * 180 // 0–180 degree arc
-  return (
-    <SectionCard style={{ marginBottom: 24, border: `1px solid ${color}30`, boxShadow: `0 0 20px ${color}10` }}>
-      <SectionTitle>🇮🇳 Time-of-Use Cost Optimisation</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 28, alignItems: "start" }}>
-        {/* Score Gauge */}
-        <div style={{ textAlign: "center" as const }}>
-          <svg width={220} height={130} viewBox="0 0 220 130">
-            <path d="M30 110 A80 80 0 0 1 190 110" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={14} strokeLinecap="round" />
-            <path
-              d={`M30 110 A80 80 0 0 1 ${30 + Math.cos(Math.PI - (scoreAngle * Math.PI / 180)) * 80 + 80} ${110 - Math.sin(Math.PI - (scoreAngle * Math.PI / 180)) * 80}`}
-              fill="none" stroke={color} strokeWidth={14} strokeLinecap="round"
-              style={{ filter: `drop-shadow(0 0 8px ${color}88)` }}
-            />
-            <text x={110} y={95} textAnchor="middle" fill={color} style={{ fontFamily: "'Orbitron',monospace", fontSize: 28, fontWeight: 700 }}>{tou.score}</text>
-            <text x={110} y={112} textAnchor="middle" fill={C.muted} style={{ fontSize: 10 }}>/100 ToU Score</text>
-          </svg>
-          <div style={{ marginTop: 4 }}>
-            <Badge label={tou.band.replace("_", " ").toUpperCase()} color={color} />
-          </div>
-          <div style={{ marginTop: 8, fontFamily: "'Orbitron',monospace", fontSize: 13, color }}>
-            ₹{tou.tariff_rs_kwh}/kWh
-          </div>
-        </div>
-
-        {/* Windows + Recommendation */}
-        <div>
-          <div style={{ background: `${color}12`, border: `1px solid ${color}30`, borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color, fontWeight: 700, marginBottom: 4, letterSpacing: "0.06em" }}>💡 RECOMMENDATION</div>
-            <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6 }}>{tou.recommendation}</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-            {tou.windows.map((w: any, i: number) => {
-              const wc = w.color === "green" ? C.green : w.color === "red" ? C.red : C.amber
-              const isActive = tou.band === w.label.toLowerCase().replace(" ", "_")
-              return (
-                <div key={i} style={{
-                  background: isActive ? wc + "15" : "rgba(0,0,0,0.2)",
-                  border: `1px solid ${isActive ? wc + "50" : "rgba(255,255,255,0.07)"}`,
-                  borderRadius: 10, padding: "12px 14px",
-                }}>
-                  <div style={{ fontSize: 10, color: wc, fontWeight: 700, marginBottom: 4 }}>{w.label}</div>
-                  <div style={{ fontSize: 11, color: C.text, marginBottom: 4 }}>{w.hours}</div>
-                  <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 13, color: wc }}>{w.rate}</div>
-                  {isActive && <div style={{ marginTop: 6 }}><Badge label="NOW" color={wc} /></div>}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      </div>
-    </SectionCard>
-  )
-}
-
-// ─── Occupancy Inference Panel ───────────────────────────────────────
-function OccupancyPanel({ occ }: { occ: any }) {
-  if (!occ) return null
-  const stateColor: Record<string, string> = {
-    "Sleep": C.purple, "Away": C.amber, "Home — Active": C.green, "Home — Idle": C.accent,
-  }
-  const color = stateColor[occ.state] || C.accent
-  return (
-    <SectionCard style={{ marginBottom: 24, border: `1px solid ${color}30` }}>
-      <SectionTitle>🧠 Occupancy Inference (HMM-Driven)</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 24, alignItems: "center" }}>
-        {/* State */}
-        <div style={{ textAlign: "center" as const }}>
-          <div style={{ fontSize: 52, marginBottom: 8 }}>{occ.icon}</div>
-          <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 13, fontWeight: 700, color }}>{occ.state}</div>
-          <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>{occ.confidence}% confidence</div>
-          <div style={{ marginTop: 8 }}>
-            <div style={{ height: 6, background: "rgba(255,255,255,0.07)", borderRadius: 3, width: 100, margin: "0 auto" }}>
-              <div style={{ height: "100%", width: `${occ.confidence}%`, background: color, borderRadius: 3, boxShadow: `0 0 8px ${color}66` }} />
-            </div>
-          </div>
-        </div>
-
-        {/* Load info */}
-        <div>
-          <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>Load Regime: <span style={{ color }}>{occ.regime}</span></div>
-          <div style={{ fontSize: 12, color: C.text, lineHeight: 1.8 }}>
-            The HMM model analyses your aggregate load pattern and infers your home's occupancy state.
-            This enables smart automation triggers without cameras or sensors.
-          </div>
-        </div>
-
-        {/* Automation triggers */}
-        <div style={{ minWidth: 180 }}>
-          <div style={{ fontSize: 10, color: C.muted, letterSpacing: "0.08em", marginBottom: 10 }}>AUTO TRIGGERS</div>
-          {occ.automations.map((a: string, i: number) => (
-            <div key={i} style={{
-              background: `${color}10`, border: `1px solid ${color}25`,
-              borderRadius: 8, padding: "6px 12px", marginBottom: 6,
-              fontSize: 11, color: C.text, display: "flex", alignItems: "center", gap: 6,
-            }}>
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
-              {a}
-            </div>
-          ))}
-        </div>
-      </div>
-    </SectionCard>
-  )
-}
-
+// ─── Palette ──────────────────────────────────────────────
 const C = {
   bg: "#04090f",
-  surface: "rgba(255,255,255,0.03)",
-  border: "rgba(0,229,255,0.10)",
+  surface: "rgba(255,255,255,0.04)",
+  border: "rgba(0,229,255,0.14)",
   accent: "#00e5ff",
+  blue: "#00e5ff",
   green: "#39ff14",
   amber: "#ffb300",
-  purple: "#b388ff",
   red: "#ff5252",
+  purple: "#b388ff",
   text: "#c8dbe8",
-  muted: "rgba(200,219,232,0.4)",
+  muted: "rgba(200,219,232,0.55)",
+}
+const CHANNELS = ["Heating", "Life Support", "Comms", "Labs", "Kitchen-Mess"]
+const MODULES = ["Lab Module", "Comms Backup", "Non-Essential Heating Zone", "Garage/Vehicle Bay"]
+const INITIAL_SWITCHES: Record<string, boolean> = {
+  "Lab Module": true,
+  "Comms Backup": true,
+  "Non-Essential Heating Zone": true,
+  "Garage/Vehicle Bay": false,
 }
 
-const APP_COLORS = [C.accent, C.green, C.amber, C.purple, C.red]
+const stationHistoryData = [
+  { time: "00", Heating: 12, "Life Support": 18, Comms: 14, Labs: 11, "Kitchen-Mess": 8 },
+  { time: "10", Heating: 14, "Life Support": 19, Comms: 16, Labs: 12, "Kitchen-Mess": 9 },
+  { time: "20", Heating: 15, "Life Support": 20, Comms: 17, Labs: 13, "Kitchen-Mess": 10 },
+  { time: "30", Heating: 16, "Life Support": 21, Comms: 18, Labs: 15, "Kitchen-Mess": 12 },
+  { time: "40", Heating: 17, "Life Support": 21, Comms: 19, Labs: 16, "Kitchen-Mess": 12 },
+  { time: "50", Heating: 18, "Life Support": 23, Comms: 17, Labs: 16, "Kitchen-Mess": 11 },
+  { time: "60", Heating: 17, "Life Support": 22, Comms: 16, Labs: 15, "Kitchen-Mess": 10 },
+]
 
-function riskColor(r: string) {
-  if (r === "CRITICAL" || r === "HIGH") return C.red
-  if (r === "WARNING" || r === "MODERATE") return C.amber
-  return C.green
+const reactiveHistory = [
+  { time: "00", kVA: 18 }, { time: "10", kVA: 20 }, { time: "20", kVA: 22 }, { time: "30", kVA: 21 }, { time: "40", kVA: 24 }, { time: "50", kVA: 20 }, { time: "60", kVA: 19 },
+]
+
+// ─── Savings model (client-side estimate, clearly labeled) ─
+const GRID_TARIFF_PER_KWH = 22 // ₹ per kWh equivalent cost of running that load on genset power
+const CO2_KG_PER_KWH = 0.85    // kg CO2 per kWh of diesel-genset electricity
+const SESSION_KWH_KEY = "nilm_station_ops_energy_saved_kwh"
+function readSessionNumber(key: string) {
+  if (typeof window === "undefined") return 0
+  const raw = window.sessionStorage.getItem(key)
+  if (!raw) return 0
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : 0
+}
+function writeSessionNumber(key: string, value: number) {
+  if (typeof window === "undefined") return
+  try { window.sessionStorage.setItem(key, String(value)) } catch {}
 }
 
-function SectionCard({ children, style = {} }: any) {
-  return (
-    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: "24px 28px", ...style }}>
-      {children}
-    </div>
-  )
+type StationData = {
+  station_loads?: Record<string, number>
+  total_load?: number
+  ml?: any
+  simulation?: { blizzard_mode: boolean; polar_night: boolean }
+  smart_alarms?: string[]
+  occupancy?: any
+  [key: string]: any
 }
 
-function SectionTitle({ children }: any) {
-  return (
-    <h2 style={{ fontFamily: "'Orbitron',monospace", fontSize: 11, fontWeight: 700, color: "#fff", letterSpacing: "0.12em", textTransform: "uppercase" as const, marginBottom: 20 }}>
-      {children}
-    </h2>
-  )
+import { LiveChangesTicker, useTelemetryTickerTracker } from "../components/ui"
+
+// ─── Hooks ──────────────────────────────────────────────────
+function useSmoothNumber(target: number, duration = 200) {
+  const [value, setValue] = useState(target)
+  const prevRef = useRef(target)
+  useEffect(() => {
+    const from = prevRef.current
+    const to = Number.isFinite(target) ? target : 0
+    if (from === to) return
+    let raf = 0
+    const start = performance.now()
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / duration)
+      const eased = 1 - Math.pow(1 - p, 3)
+      setValue(from + (to - from) * eased)
+      if (p < 1) raf = requestAnimationFrame(tick)
+      else prevRef.current = to
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [target, duration])
+  return value
 }
 
-function StatRow({ label, value, color = C.text, mono = false }: any) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid rgba(0,229,255,0.06)` }}>
-      <span style={{ fontSize: 12, color: C.muted }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 600, color, fontFamily: mono ? "'Orbitron',monospace" : "inherit" }}>{value}</span>
-    </div>
-  )
-}
-
-function RiskBadge({ level }: { level: string }) {
-  const color = riskColor(level)
-  return (
-    <span style={{ padding: "3px 12px", borderRadius: 100, fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", background: color + "18", border: `1px solid ${color}40`, color }}>
-      {level}
-    </span>
-  )
-}
-
-function Badge({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 100, fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" as const, background: color + "18", border: `1px solid ${color}35`, color }}>
-      {label}
-    </span>
-  )
-}
-
-function GaugeArc({ value, max = 100, color, label, unit = "" }: any) {
-  const pct = Math.min(value / max, 1)
-  const r = 52, cx = 64, cy = 64
-  const startAngle = Math.PI * 0.8, endAngle = Math.PI * 2.2
-  const totalArc = endAngle - startAngle
-  const angle = startAngle + pct * totalArc
-  const arcX = (a: number) => cx + r * Math.cos(a)
-  const arcY = (a: number) => cy + r * Math.sin(a)
-  const largeFull = totalArc > Math.PI ? 1 : 0
-  const largeVal = pct * totalArc > Math.PI ? 1 : 0
-  const trackPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${largeFull} 1 ${arcX(endAngle)} ${arcY(endAngle)}`
-  const valPath = pct > 0 ? `M ${arcX(startAngle)} ${arcY(startAngle)} A ${r} ${r} 0 ${largeVal} 1 ${arcX(angle)} ${arcY(angle)}` : ""
-  return (
-    <div style={{ textAlign: "center" as const }}>
-      <svg width={128} height={100} viewBox="0 0 128 100">
-        <path d={trackPath} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={8} strokeLinecap="round" />
-        {valPath && <path d={valPath} fill="none" stroke={color} strokeWidth={8} strokeLinecap="round" style={{ filter: `drop-shadow(0 0 6px ${color}88)` }} />}
-        <text x={cx} y={cy + 10} textAnchor="middle" fill={color} style={{ fontFamily: "'Orbitron',monospace", fontSize: 18, fontWeight: 700 }}>
-          {typeof value === "number" ? value.toFixed(0) : value}
-        </text>
-        <text x={cx} y={cy + 26} textAnchor="middle" fill={C.muted} style={{ fontSize: 10 }}>{unit}</text>
-      </svg>
-      <div style={{ fontSize: 11, color: C.muted, letterSpacing: "0.06em", marginTop: -8 }}>{label}</div>
-    </div>
-  )
-}
-
-function ApplianceCard({ name, watt, pct, color, isOff, isDominant }: any) {
-  const icons: Record<string, string> = { AC: "❄", Fridge: "🧊", Fan: "💨", TV: "📺", Geyser: "🔥", "Washing Machine": "🫧" }
-  return (
-    <div style={{
-      background: isOff ? "rgba(255,82,82,0.04)" : C.surface,
-      border: `1px solid ${isDominant ? color + "60" : isOff ? "rgba(255,82,82,0.2)" : color + "25"}`,
-      borderRadius: 12, padding: "16px 18px", transition: "all 0.3s",
-      boxShadow: isDominant ? `0 0 16px ${color}22` : "none",
-    }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 20 }}>{icons[name] || "⚡"}</span>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: isOff ? C.muted : C.text }}>{name}</div>
-            <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{pct.toFixed(1)}% of total</div>
-          </div>
-        </div>
-        <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 15, fontWeight: 700, color: isOff ? C.muted : color }}>
-          {isOff ? "OFF" : `${watt}W`}
-        </div>
-      </div>
-      {isDominant && !isOff && (
-        <div style={{ marginBottom: 8 }}>
-          <Badge label="RF Active" color={color} />
-        </div>
-      )}
-      <div style={{ height: 4, background: "rgba(255,255,255,0.06)", borderRadius: 2 }}>
-        <div style={{
-          height: "100%", borderRadius: 2, width: `${isOff ? 0 : pct}%`,
-          background: `linear-gradient(90deg,${color},${color}66)`,
-          transition: "width 0.6s ease",
-        }} />
-      </div>
-    </div>
-  )
-}
-
-// NEW: ML Insight strip for consumer dashboard
-function MLStrip({ ml }: { ml: any }) {
-  if (!ml) return null
-  const anomalyColor = ml.anomaly_score > 70 ? C.red : ml.anomaly_score > 40 ? C.amber : C.green
-  const handleFeedback = async (isCorrect: boolean) => {
-    try {
-      await fetch("http://127.0.0.1:8000/feedback-disaggregation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          timestamp: new Date().toISOString(),
-          detected: ml.dominant_appliance,
-          is_correct: isCorrect
-        })
-      });
-      alert(isCorrect ? "Thanks! Model is learning." : "Noted. We'll adjust the model.");
-    } catch { }
-  }
-
-  return (
-    <div>
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16,
-      }}>
-        {[
-          { label: "RF Dominant", value: ml.dominant_appliance, color: C.accent, sub: `${ml.rf_confidence}% confidence` },
-          { label: "Anomaly Score", value: `${ml.anomaly_score}%`, color: anomalyColor, sub: ml.anomaly_score > 70 ? "Spike detected" : "Normal" },
-          { label: "HMM State", value: ml.hmm_state, color: C.purple, sub: "Consumption regime" },
-          { label: "LSTM Forecast", value: ml.lstm_forecast_w > 0 ? `${ml.lstm_forecast_w.toFixed(0)}W` : "—", color: C.amber, sub: "Next interval" },
-        ].map((item, i) => (
-          <div key={i} style={{
-            background: C.surface, border: `1px solid ${item.color}20`,
-            borderRadius: 12, padding: "16px 18px",
-            position: "relative" as const, overflow: "hidden",
-          }}>
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg,transparent,${item.color},transparent)` }} />
-            <div style={{ fontSize: 10, color: C.muted, letterSpacing: "0.08em", textTransform: "uppercase" as const, marginBottom: 6 }}>{item.label}</div>
-            <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 18, fontWeight: 700, color: item.color, textTransform: "uppercase" as const }}>{item.value}</div>
-            <div style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>{item.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Active Learning Feedback Loop */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(0,0,0,0.3)', padding: "10px 16px", borderRadius: 10, border: `1px solid ${C.border}`, marginBottom: 24 }}>
-        <span style={{ fontSize: 12, color: C.muted }}>Was the dominant appliance correctly identified as <strong>{ml.dominant_appliance}</strong>?</span>
-        <button onClick={() => handleFeedback(true)} style={{ background: `${C.green}20`, color: C.green, border: `1px solid ${C.green}50`, padding: "4px 12px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>YES</button>
-        <button onClick={() => handleFeedback(false)} style={{ background: `${C.red}20`, color: C.red, border: `1px solid ${C.red}50`, padding: "4px 12px", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>NO</button>
-      </div>
-    </div>
-  )
-}
-
-// NILM Predict panel
-function NilmPredict() {
-  const [watts, setWatts] = useState("1200")
-  const [result, setResult] = useState<any>(null)
-  const [loading, setLoading] = useState(false)
-
-  const run = async () => {
-    setLoading(true)
-    try {
-      const r = await fetch("http://127.0.0.1:8000/nilm-predict", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ aggregate: parseFloat(watts), timestamp: new Date().toISOString() }),
-      })
-      setResult(await r.json())
-    } catch { setResult(null) }
-    setLoading(false)
-  }
-
-  return (
-    <SectionCard style={{ marginBottom: 24 }}>
-      <SectionTitle>NILM Predict — Manual Input</SectionTitle>
-      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 20 }}>
-        <input
-          type="number"
-          value={watts}
-          onChange={e => setWatts(e.target.value)}
-          style={{
-            background: "rgba(0,0,0,0.4)", border: `1px solid ${C.border}`,
-            borderRadius: 8, padding: "10px 14px", color: C.accent,
-            fontFamily: "'Orbitron',monospace", fontSize: 16, width: 160,
-            outline: "none",
-          }}
-          placeholder="Watts"
-        />
-        <button onClick={run} disabled={loading} style={{
-          background: `${C.accent}18`, border: `1px solid ${C.accent}40`,
-          borderRadius: 8, padding: "10px 20px", color: C.accent,
-          fontFamily: "'Orbitron',monospace", fontSize: 12, fontWeight: 700,
-          cursor: "pointer", letterSpacing: "0.08em",
-          opacity: loading ? 0.5 : 1,
-        }}>
-          {loading ? "RUNNING..." : "RUN INFERENCE"}
-        </button>
-      </div>
-      {result && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          {[
-            { label: "RF Label", value: result.rf_label, color: C.accent },
-            { label: "Confidence", value: `${(result.rf_confidence * 100).toFixed(1)}%`, color: C.green },
-            { label: "Anomaly", value: `${(result.anomaly_score * 100).toFixed(1)}%`, color: result.anomaly_score > 0.7 ? C.red : C.green },
-            { label: "LSTM Fcst", value: result.lstm_forecast > 0 ? `${result.lstm_forecast.toFixed(0)}W` : "—", color: C.amber },
-          ].map((r, i) => (
-            <div key={i} style={{ background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "14px 16px", border: `1px solid ${r.color}20` }}>
-              <div style={{ fontSize: 10, color: C.muted, marginBottom: 4, letterSpacing: "0.08em" }}>{r.label}</div>
-              <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 16, fontWeight: 700, color: r.color, textTransform: "uppercase" as const }}>{r.value}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </SectionCard>
-  )
-}
-
-function UpgradeSimulator() {
-  const [appliance, setAppliance] = useState("AC")
-  const [currentStars, setCurrentStars] = useState(2)
-  const [targetStars, setTargetStars] = useState(5)
-  const [hours, setHours] = useState(6)
-  const [result, setResult] = useState<any>(null)
-  const [loading, setLoading] = useState(false)
-
-  const runSim = async () => {
-    setLoading(true)
-    try {
-      const r = await fetch(`http://127.0.0.1:8000/simulate-upgrade?appliance=${appliance}&current_stars=${currentStars}&target_stars=${targetStars}&daily_hours=${hours}`)
-      setResult(await r.json())
-    } catch { setResult(null) }
-    setLoading(false)
-  }
-
-  return (
-    <SectionCard style={{ marginBottom: 24, border: `1px solid ${C.purple}40` }}>
-      <SectionTitle><span style={{ color: C.purple }}>What-If Simulator (Appliance Upgrades)</span></SectionTitle>
-      <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
-        <select value={appliance} onChange={e => setAppliance(e.target.value)} style={{ background: "rgba(0,0,0,0.4)", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.text, fontFamily: "'Orbitron',monospace", outline: "none" }}>
-          {["AC", "Fridge", "Fan", "TV", "Geyser", "Washing Machine"].map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: C.muted }}>From:</span>
-          <select value={currentStars} onChange={e => setCurrentStars(Number(e.target.value))} style={{ background: "rgba(0,0,0,0.4)", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px", color: C.text, outline: "none" }}>
-            {[1, 2, 3].map(s => <option key={s} value={s}>{s} Star</option>)}
-          </select>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: C.muted }}>To:</span>
-          <select value={targetStars} onChange={e => setTargetStars(Number(e.target.value))} style={{ background: "rgba(0,0,0,0.4)", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px", color: C.text, outline: "none" }}>
-            {[4, 5].map(s => <option key={s} value={s}>{s} Star</option>)}
-          </select>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: C.muted }}>Hours/day:</span>
-          <input type="number" value={hours} onChange={e => setHours(Number(e.target.value))} style={{ background: "rgba(0,0,0,0.4)", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px", color: C.text, width: 60, outline: "none" }} />
-        </div>
-        <button onClick={runSim} disabled={loading} style={{ background: `${C.purple}20`, border: `1px solid ${C.purple}50`, borderRadius: 8, padding: "8px 16px", color: C.purple, fontFamily: "'Orbitron',monospace", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-          {loading ? "CALCULATING..." : "SIMULATE"}
-        </button>
-      </div>
-
-      {result && result.monthly_savings_rs !== undefined && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-          <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.accent}20` }}>
-            <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Load Reduction</div>
-            <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 18, fontWeight: 700, color: C.accent }}>⬇ {result.reduction_pct}%</div>
-            <div style={{ fontSize: 10, color: C.text, marginTop: 4 }}>{result.current_w}W → {result.target_w}W</div>
-          </div>
-          <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.green}20` }}>
-            <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>Monthly Savings</div>
-            <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 18, fontWeight: 700, color: C.green }}>₹{Number(result.monthly_savings_rs).toLocaleString()}</div>
-          </div>
-          <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.green}40`, boxShadow: `0 0 10px ${C.green}20` }}>
-            <div style={{ fontSize: 10, color: C.green, marginBottom: 4 }}>Yearly Projection</div>
-            <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 18, fontWeight: 700, color: C.green }}>₹{Number(result.yearly_savings_rs).toLocaleString()}</div>
-          </div>
-        </div>
-      )}
-      {result && result.detail && (
-        <div style={{ color: C.red, fontSize: 12, marginTop: 12 }}>API Error: {JSON.stringify(result.detail)}</div>
-      )}
-    </SectionCard>
-  )
-}
-
-const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, name, percent }: any) => {
-  const RADIAN = Math.PI / 180
-  const radius = innerRadius + (outerRadius - innerRadius) * 1.4
-  const x = cx + radius * Math.cos(-midAngle * RADIAN)
-  const y = cy + radius * Math.sin(-midAngle * RADIAN)
-  return (
-    <text x={x} y={y} fill={C.muted} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" style={{ fontSize: 10 }}>
-      {name} {(percent * 100).toFixed(0)}%
-    </text>
-  )
-}
-
-// ─── Smart Plug Mini Toggle ────────────────────────────────
-function MiniToggle({ on, onChange }: { on: boolean; onChange: () => void }) {
-  return (
-    <div onClick={e => { e.stopPropagation(); onChange() }} style={{
-      width: 44, height: 24, borderRadius: 24,
-      background: on ? C.green + "22" : "rgba(255,255,255,0.06)",
-      border: `1.5px solid ${on ? C.green : "rgba(255,255,255,0.15)"}`,
-      position: "relative" as const, cursor: "pointer",
-      transition: "all 0.25s ease", flexShrink: 0,
-      boxShadow: on ? `0 0 10px ${C.green}44` : "none",
-    }}>
-      <div style={{
-        position: "absolute", top: "50%",
-        transform: `translateY(-50%) translateX(${on ? 22 : 3}px)`,
-        width: 16, height: 16, borderRadius: "50%",
-        background: on ? C.green : "rgba(255,255,255,0.25)",
-        transition: "all 0.25s ease",
-        boxShadow: on ? `0 0 6px ${C.green}` : "none",
-      }} />
-    </div>
-  )
-}
-
-const PLUG_META: Record<string, { icon: string; color: string }> = {
-  ac:              { icon: "❄️",  color: "#00e5ff" },
-  fridge:          { icon: "🧊",  color: "#b388ff" },
-  fan:             { icon: "💨",  color: "#39ff14" },
-  tv:              { icon: "📺",  color: "#e040fb" },
-  geyser:          { icon: "🔥",  color: "#ffb300" },
-  washing_machine: { icon: "🫧",  color: "#00bcd4" },
-  microwave:       { icon: "📡",  color: "#ff9800" },
-  light:           { icon: "💡",  color: "#ffee58" },
-  other:           { icon: "🔌",  color: "#90a4ae" },
-}
-
-function SmartPlugSection() {
-  const [plugs, setPlugs]   = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [totalW, setTotalW]   = useState(0)
-
-  const fetchPlugs = async () => {
-    try {
-      const r = await fetch("http://127.0.0.1:8000/devices")
-      const d = await r.json()
-      setPlugs(d)
-      setTotalW(d.filter((p: any) => p.on).reduce((s: number, p: any) => s + p.watts_now, 0))
-      setLoading(false)
-    } catch {}
-  }
+function useAccumulatedKwh(instantKw: number) {
+  const [total, setTotal] = useState<number>(() => {
+    const saved = readSessionNumber(SESSION_KWH_KEY)
+    return saved > 0 ? saved : 1.2
+  })
+  const lastRef = useRef<number>(Date.now())
+  const instantRef = useRef<number>(instantKw)
+  instantRef.current = instantKw
 
   useEffect(() => {
-    fetchPlugs()
-    const iv = setInterval(fetchPlugs, 4000)
-    return () => clearInterval(iv)
+    lastRef.current = Date.now()
+    const timer = setInterval(() => {
+      const now = Date.now()
+      const seconds = Math.max(0.1, (now - lastRef.current) / 1000)
+      lastRef.current = now
+      const rate = Math.max(0, instantRef.current)
+      if (rate > 0) {
+        const hours = seconds / 3600
+        const delta = rate * hours
+        setTotal(prev => {
+          const current = readSessionNumber(SESSION_KWH_KEY) || prev
+          const next = current + delta
+          writeSessionNumber(SESSION_KWH_KEY, next)
+          return next
+        })
+      }
+    }, 1000)
+    return () => clearInterval(timer)
   }, [])
 
-  const toggle = async (id: string) => {
-    await fetch(`http://127.0.0.1:8000/devices/${id}/toggle`, { method: "POST" })
-    fetchPlugs()
+  return total
+}
+
+const fmt = (n: number, d = 1) =>
+  Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 }) : "0"
+
+function AnimatedNumber({ value, decimals = 0 }: { value: number; decimals?: number }) {
+  const smooth = useSmoothNumber(value, 200)
+  return <span>{fmt(smooth, decimals)}</span>
+}
+
+function Sparkline({ points, color = C.accent }: { points: number[]; color?: string }) {
+  const data = points.map((value, idx) => ({ value, idx }))
+  return (
+    <div style={{ height: 34, width: "100%", marginTop: 8 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+          <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} animationDuration={180} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+// ─── UI primitives ──────────────────────────────────────────
+function Card({ title, badge, children }: { title: string; badge?: string; children: React.ReactNode }) {
+  return (
+    <section className="be-card" style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+        <h2 style={{ color: "#fff", fontSize: 13, letterSpacing: "0.1em", margin: 0, textTransform: "uppercase" }}>{title}</h2>
+        {badge && <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", padding: "3px 10px", borderRadius: 100, background: `${C.green}15`, border: `1px solid ${C.green}35`, color: C.green }}>{badge}</span>}
+      </div>
+      {children}
+    </section>
+  )
+}
+function Metric({ label, value, color = C.accent, sub }: { label: string; value: string; color?: string; sub?: string }) {
+  return (
+    <div className="be-metric" style={{ background: "rgba(0,0,0,0.22)", border: `1px solid ${color}35`, borderRadius: 10, padding: "14px 16px" }}>
+      <div style={{ color: C.muted, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "Inter, Segoe UI, Arial, sans-serif" }}>{label}</div>
+      <div style={{ color, fontSize: 22, fontWeight: 700, marginTop: 6, fontFamily: "'Oxanium', 'Inter', 'JetBrains Mono', monospace" }}>{value}</div>
+      {sub && <div style={{ color: C.muted, fontSize: 10, marginTop: 4, fontFamily: "Inter, Segoe UI, Arial, sans-serif" }}>{sub}</div>}
+    </div>
+  )
+}
+
+function AnimatedKpiMetric({ label, value, color = C.accent, sub }: { label: string; value: string; color?: string; sub?: string }) {
+  return (
+    <div className="be-metric" style={{ background: "rgba(0,0,0,0.22)", border: `1px solid ${color}35`, borderRadius: 10, padding: "14px 16px", position: "relative", overflow: "hidden" }}>
+      <span style={{ position: "absolute", left: 0, top: 0, height: 2, width: "55%", background: color, boxShadow: `0 0 14px ${color}`, opacity: 0.9 }} />
+      <div style={{ color: C.muted, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "Inter, Segoe UI, Arial, sans-serif" }}>{label}</div>
+      <div style={{ color, fontSize: 22, fontWeight: 700, marginTop: 6, fontFamily: "'Oxanium', 'Inter', 'JetBrains Mono', monospace" }}>{value}</div>
+      {sub && <div style={{ color: C.muted, fontSize: 10, marginTop: 4, fontFamily: "Inter, Segoe UI, Arial, sans-serif" }}>{sub}</div>}
+    </div>
+  )
+}
+
+function LiveImpactStrip({ items }: { items: Array<{ label: string; value: string; color: string }> }) {
+  return (
+    <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
+      {items.map((item, idx) => (
+        <div key={item.label} className="be-metric" style={{ background: "rgba(255,255,255,0.035)", border: `1px solid ${item.color}30`, borderRadius: 14, padding: "16px 16px", minHeight: 86, position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", left: 0, top: 0, height: 2, width: `${56 + idx * 12}%`, background: item.color, boxShadow: `0 0 14px ${item.color}` }} />
+          <div style={{ color: C.muted, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>{item.label}</div>
+          <div style={{ color: item.color, fontSize: 23, fontWeight: 800, marginTop: 10, fontFamily: "'JetBrains Mono',monospace" }}>{item.value}</div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
+export default function StationOpsPage() {
+  const [data, setData] = useState<StationData | null>(null)
+  const [switches, setSwitches] = useState<Record<string, boolean>>(INITIAL_SWITCHES)
+  const [upgrade, setUpgrade] = useState<any>(null)
+  const [upgradeType, setUpgradeType] = useState("module_insulation")
+  const [running, setRunning] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+
+  useEffect(() => {
+    const load = () =>
+      fetch(`${API_URL}/station-dashboard`)
+        .then(r => r.json())
+        .then(d => { setData(d); setLastUpdated(new Date()) })
+        .catch(() => {})
+    load()
+    const timer = setInterval(load, 1200)
+    return () => clearInterval(timer)
+  }, [])
+
+  const toggleModule = (module: string) => {
+    const enabled = !switches[module]
+    setSwitches(prev => ({ ...prev, [module]: enabled }))
+    fetch(`${API_URL}/toggle-device`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device: module, status: enabled }) }).catch(() => {})
+  }
+  const runUpgrade = () => {
+    setRunning(true)
+    fetch(`${API_URL}/simulate-upgrade?module=Lab%20Module&upgrade_type=${upgradeType}`)
+      .then(r => r.json())
+      .then(setUpgrade)
+      .catch(() => {})
+      .finally(() => setRunning(false))
   }
 
-  const allOff = async () => {
-    await Promise.all(plugs.filter(p => p.on).map(p => fetch(`http://127.0.0.1:8000/devices/${p.id}/toggle`, { method: "POST" })))
-    fetchPlugs()
-  }
+  const loads = data?.station_loads ?? Object.fromEntries(CHANNELS.map(channel => [channel, 0]))
+  const total = data?.total_load ?? Object.values(loads).reduce((sum, value) => sum + Number(value), 0)
+  const crewRegime = data?.occupancy?.state ?? "Full Winter-Over Crew"
+  const faultAlert = data?.smart_alarms?.[0] ?? "No equipment fault flags"
 
-  if (loading) return null
+  const totalDisplay = useSmoothNumber(Math.round(total), 200)
 
-  const activeCount = plugs.filter(p => p.on).length
+  // Real-time telemetry changes ticker
+  const tickerItems = useTelemetryTickerTracker({
+    "Station Load": { val: Math.round(total), unit: "kW", invert: true },
+    "Heating": { val: Number(loads["Heating"] ?? 0), unit: "kW", invert: true },
+    "Life Support": { val: Number(loads["Life Support"] ?? 0), unit: "kW", invert: true },
+    "Comms": { val: Number(loads["Comms"] ?? 0), unit: "kW", invert: true },
+    "Labs": { val: Number(loads["Labs"] ?? 0), unit: "kW", invert: true },
+    "Fault Score": { val: Math.round(data?.ml?.anomaly_score ?? 0), unit: "%", invert: true },
+  })
+
+  // shed-eligible modules currently toggled off = "reclaimable" standby load
+  const shedActiveKw = MODULES.reduce((sum, m) => sum + (switches[m] ? 6 : 0), 0) // 6 kW nominal per shed module, adjust to real telemetry
+  const shedSavedKwh = useAccumulatedKwh(shedActiveKw)
+  const shedSavedRupees = shedSavedKwh * GRID_TARIFF_PER_KWH
+  const shedSavedCo2 = shedSavedKwh * CO2_KG_PER_KWH
+  const vampireNow = 8 + 3 * 3 + (data?.simulation?.polar_night ? 7 : 0) // matches the 18–24 band metric below, as an "always-on now" figure
+  const projectedMonthlyRupees = vampireNow * 24 * 30 * GRID_TARIFF_PER_KWH * 0.35 // 35% assumed recoverable share of standby load
+
+  if (!data) return <main style={{ minHeight: "100vh", background: C.bg, color: C.accent, padding: 80, textAlign: "center" }}>LOADING STATION TELEMETRY...</main>
 
   return (
-    <SectionCard style={{ marginBottom: 24, border: `1px solid rgba(0,188,212,0.25)` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "38px 28px 80px", color: C.text, animation: "beFadeUp 0.5s ease" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&family=JetBrains+Mono:wght@400;700&display=swap');
+        @keyframes beFadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes bePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes slideGlow { from { opacity: 0.72; filter: blur(0); } 50% { opacity: 1; filter: blur(0.5px); } to { opacity: 0.85; filter: blur(0); } }
+        .be-card { animation: beFadeUp 0.35s ease both; transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease; }
+        .be-card:hover { border-color: rgba(0,229,255,0.4); box-shadow: 0 8px 34px rgba(0,229,255,0.10); transform: translateY(-2px); }
+        .be-metric { transition: border-color 0.2s ease, transform 0.18s ease, box-shadow 0.2s ease; }
+        .be-metric:hover { transform: translateY(-1px); box-shadow: 0 0 12px rgba(0,229,255,0.08); }
+        .be-switch { transition: background 0.18s ease, border-color 0.18s ease, transform 0.15s ease; }
+        .be-switch:hover { transform: translateY(-1px); }
+        .be-btn { transition: background 0.18s ease, transform 0.15s ease; }
+        .be-btn:hover { transform: translateY(-1px); }
+      `}</style>
+
+      <header style={{ marginBottom: 20, display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <SectionTitle>🔌 Smart Plug Control</SectionTitle>
-          <p style={{ fontSize: 12, color: C.muted, marginTop: -14 }}>
-            {activeCount} of {plugs.length} plugs active · {totalW.toFixed(0)}W live draw
-          </p>
+          <div style={{ color: C.muted, fontSize: 10, letterSpacing: "0.15em" }}>STATION OPS</div>
+          <h1 style={{ color: "#fff", fontSize: 32, margin: "8px 0", fontFamily: "Inter, Segoe UI, Arial, sans-serif", fontStyle: "normal", fontWeight: 700 }}>Polar Station Operations</h1>
+          <p style={{ color: C.muted, margin: 0, maxWidth: 560 }}>Critical-load prioritization, crew regime, equipment status, and module control.</p>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <a href="/devices" style={{
-            padding: "6px 14px", borderRadius: 8, fontSize: 10, fontWeight: 700,
-            letterSpacing: "0.08em", color: "#00bcd4", textDecoration: "none",
-            background: "rgba(0,188,212,0.1)", border: "1px solid rgba(0,188,212,0.3)",
-          }}>MANAGE ALL →</a>
-          <button onClick={allOff} style={{
-            padding: "6px 14px", borderRadius: 8, fontSize: 10, fontWeight: 700,
-            letterSpacing: "0.08em", color: C.red, cursor: "pointer",
-            background: C.red + "10", border: `1px solid ${C.red}30`,
-          }}>ALL OFF</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: C.muted, letterSpacing: "0.08em" }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green, boxShadow: `0 0 8px ${C.green}`, animation: "bePulse 1.6s infinite" }} />
+          {lastUpdated ? `UPDATED ${lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : ""}
         </div>
-      </div>
+      </header>
 
-      {plugs.length === 0 ? (
-        <div style={{ textAlign: "center" as const, padding: "24px 0", opacity: 0.4 }}>
-          <div style={{ fontSize: 10, color: C.muted, letterSpacing: "0.1em" }}>
-            NO PLUGS REGISTERED — <a href="/devices" style={{ color: "#00bcd4" }}>ADD ONE →</a>
-          </div>
+      <SimulationBanner focus="ops" />
+
+      <LiveChangesTicker items={tickerItems} />
+
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(170px, 1fr))", gap: 12, marginBottom: 18 }}>
+        {[
+          { label: "Total Station Load", value: total, valueUnit: "kW", color: C.accent, number: totalDisplay, spark: [40,52,46,54,62,58,60,70] },
+          { label: "Crew Regime", value: crewRegime, valueUnit: "", color: C.purple, number: 0, spark: [30,38,37,44,46,42,45,50] },
+          { label: "Operating Regime", value: data.ml?.rf_regime ?? "unknown", valueUnit: "", color: C.green, number: 0, spark: [50,45,54,48,53,51,56,50] },
+          { label: "Fault Score", value: `${Math.round(data.ml?.anomaly_score ?? 0)}%`, valueUnit: "%", color: data.ml?.is_anomaly ? C.red : C.green, number: data.ml?.anomaly_score ?? 0, spark: [42,44,48,40,45,50,47,43] },
+        ].map((k, idx) => (
+          <article key={k.label} className="be-card" style={{ background: C.surface, border: `1px solid ${k.color}40`, borderRadius: 14, padding: 16, minHeight: 170, boxShadow: `0 0 12px ${k.color}10`, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: C.muted, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{k.label}</span>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green, boxShadow: `0 0 8px ${C.green}`, animation: "bePulse 1.6s infinite" }} />
+            </div>
+            <div style={{ color: k.color, fontSize: 26, fontWeight: 800, fontFamily: "'Oxanium', 'JetBrains Mono', monospace", marginTop: 12 }}>
+              {k.label === "Total Station Load" ? <AnimatedNumber value={Math.round(totalDisplay)} decimals={0} /> : k.label === "Crew Regime" ? crewRegime : k.label === "Operating Regime" ? (data.ml?.rf_regime ?? "unknown") : <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><AnimatedNumber value={Math.round(data.ml?.anomaly_score ?? 0)} decimals={0} />%</span>}{k.label !== "Crew Regime" && k.label !== "Operating Regime" && k.label !== "Fault Score" ? ` ${k.valueUnit}` : ""}
+            </div>
+            {k.label === "Fault Score" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                <span style={{ width: 34, height: 34, borderRadius: "50%", display: "inline-block", background: `conic-gradient(${C.green} ${Math.min(100, Math.round(data.ml?.anomaly_score ?? 0))}%, rgba(255,255,255,.05) 0)`, border: `1px solid ${C.border}`, boxShadow: `0 0 12px ${C.green}30` }} />
+              </div>
+            )}
+            <div style={{ height: 44, width: "100%", marginTop: 8, border: "1px solid rgba(255,255,255,0.03)", borderRadius: 7 }}>
+              <Sparkline points={k.spark} color={k.color} />
+            </div>
+          </article>
+        ))}
+      </section>
+
+      <Card title="Station load disaggregation — live" badge="LIVE">
+        <div style={{ height: 180, marginBottom: 16 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={stationHistoryData} margin={{ left: 8, right: 8, top: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="1 1" stroke="rgba(200,219,232,0.08)" />
+              <XAxis dataKey="time" stroke={C.muted} fontSize={10} />
+              <YAxis stroke={C.muted} fontSize={10} />
+              <Tooltip />
+              <Area type="monotone" dataKey="Heating" stroke={C.amber} fill={C.amber} fillOpacity={0.18} strokeWidth={2} animationDuration={420} />
+              <Area type="monotone" dataKey="Life Support" stroke={C.red} fill={C.red} fillOpacity={0.12} strokeWidth={2} animationDuration={420} />
+              <Area type="monotone" dataKey="Comms" stroke={C.accent} fill={C.accent} fillOpacity={0.12} strokeWidth={2} animationDuration={420} />
+              <Area type="monotone" dataKey="Labs" stroke={C.purple} fill={C.purple} fillOpacity={0.12} strokeWidth={2} animationDuration={420} />
+              <Area type="monotone" dataKey="Kitchen-Mess" stroke={C.green} fill={C.green} fillOpacity={0.12} strokeWidth={2} animationDuration={420} />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
-          {plugs.map(plug => {
-            const meta = PLUG_META[plug.appliance] ?? PLUG_META.other
+        <div style={{ display: "grid", gap: 16 }}>
+          {CHANNELS.map((channel, index) => {
+            const value = Number(loads[channel] ?? loads[channel.toLowerCase().replace("-mess", "")] ?? 0)
+            const colors = [C.amber, C.red, C.accent, C.purple, C.green]
+            const channelMax = Math.max(...CHANNELS.map(ch => Number(loads[ch] ?? 0)), 1)
+            const pct = Math.min(100, Math.max(4, (value / Math.max(channelMax, 1)) * 100))
             return (
-              <div key={plug.id} style={{
-                background: plug.on ? meta.color + "08" : "rgba(0,0,0,0.2)",
-                border: `1px solid ${plug.on ? meta.color + "35" : "rgba(255,255,255,0.07)"}`,
-                borderRadius: 12, padding: "14px 16px",
-                transition: "all 0.25s ease",
-                boxShadow: plug.on ? `0 2px 16px ${meta.color}12` : "none",
-              }}>
-                {/* Top row: icon + name + toggle */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                  <span style={{ fontSize: 20, filter: plug.on ? "none" : "grayscale(1) opacity(0.4)" }}>
-                    {meta.icon}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: plug.on ? "#fff" : C.muted,
-                      whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {plug.name}
-                    </div>
-                    <div style={{ fontSize: 10, color: C.muted }}>{plug.room}</div>
-                  </div>
-                  <MiniToggle on={plug.on} onChange={() => toggle(plug.id)} />
+              <div key={channel}>
+                <div style={{ display: "flex", alignItems: "center", fontSize: 12, marginBottom: 6, color: C.text }}>
+                  <span style={{ flex: 1, color: colors[index], fontWeight: 700 }}>{channel}</span>
+                  <strong style={{ width: 78, color: colors[index], fontFamily: "'JetBrains Mono',monospace", textAlign: "right" }}><AnimatedNumber value={value} decimals={1} /> kW</strong>
                 </div>
-
-                {/* Watt + cost row */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{
-                    fontFamily: "'Orbitron',monospace", fontSize: 14, fontWeight: 700,
-                    color: plug.on ? meta.color : C.muted,
-                  }}>
-                    {plug.on ? `${plug.watts_now}W` : "OFF"}
-                  </div>
-                  <div style={{ fontSize: 10, color: C.muted }}>₹{plug.cost_today}/day</div>
+                <div style={{ height: 11, background: "rgba(255,255,255,0.065)", borderRadius: 7, overflow: "hidden", border: "1px solid rgba(255,255,255,0.05)" }}>
+                  <div className="be-channel-bar" style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${colors[index]}, ${C.accent})`, borderRadius: 7, transition: "width 0.7s cubic-bezier(0.22,1,0.36,1)" }} />
                 </div>
-
-                {/* Mini energy bar */}
-                <div style={{ height: 3, background: "rgba(255,255,255,0.05)", borderRadius: 2, marginTop: 10 }}>
-                  <div style={{
-                    height: "100%", borderRadius: 2,
-                    width: plug.on ? `${Math.min((plug.watts_now / (PLUG_META[plug.appliance]?.color === "#ffb300" ? 2000 : 1200)) * 100, 100)}%` : "0%",
-                    background: `linear-gradient(90deg,${meta.color}88,${meta.color})`,
-                    transition: "width 0.5s ease",
-                  }} />
-                </div>
-
-                {/* Schedule badge if set */}
-                {plug.schedule && (
-                  <div style={{ marginTop: 8, fontSize: 9, color: C.amber, letterSpacing: "0.06em" }}>
-                    ⏰ {plug.schedule.off_at && `AUTO OFF ${plug.schedule.off_at}`}
-                  </div>
-                )}
               </div>
             )
           })}
         </div>
-      )}
-    </SectionCard>
-  )
-}
+      </Card>
 
-export default function ConsumerDashboard() {
-  const [data, setData] = useState<any>(null)
-  const [paused, setPaused] = useState(false)
-  const [history, setHistory] = useState<{ t: number; load: number; carbon: number; forecast: number }[]>([])
-  const [mode, setMode] = useState<"postpaid" | "prepaid">("postpaid")
-  const [tick, setTick] = useState(0)
-  const [shutdown, setShutdown] = useState<Record<string, boolean>>({})
-
-  useEffect(() => {
-    const doFetch = () => {
-      if (paused) return
-      fetch(`http://127.0.0.1:8000/consumer-dashboard?mode=${mode}`)
-        .then(r => r.json()).then((d: any) => {
-          setData(d)
-          setTick(t => {
-            const next = t + 1
-            setHistory(prev => [...prev.slice(-40), {
-              t: next,
-              load: d.total_load,
-              carbon: d.carbon_footprint,
-              forecast: d.ml?.lstm_forecast_w ?? 0,
-            }])
-            return next
-          })
-        }).catch(() => { })
-    }
-    doFetch()
-    const iv = setInterval(doFetch, 3500)
-    return () => clearInterval(iv)
-  }, [paused, mode])
-
-  const toggleDevice = async (device: string) => {
-    const newStatus = !shutdown[device]
-    setShutdown(prev => ({ ...prev, [device]: newStatus }))
-    await fetch("http://127.0.0.1:8000/toggle-device", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device, status: newStatus }),
-    }).catch(() => { })
-  }
-
-  if (!data) return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: C.bg }}>
-      <div style={{ fontFamily: "'Orbitron',monospace", color: C.accent, fontSize: 14, letterSpacing: "0.2em" }}>LOADING...</div>
-    </div>
-  )
-
-  const appliances = data.appliances ?? {}
-  const applianceData = Object.entries(appliances).map(([name, value]) => ({ name, value: value as number }))
-  const totalLoad = data.total_load ?? 0
-  const pieData = applianceData.filter(a => (a.value as number) > 0)
-  const dominantAppliance = data.ml?.dominant_appliance ?? ""
-
-  const recommendations: { icon: string; text: string; saving?: string }[] = []
-  if (data.efficiency_score < 60) recommendations.push({ icon: "⚡", text: "High consumption detected. Consider shifting heavy loads to off-peak hours (10PM–6AM).", saving: "Save up to ₹200/month" })
-  if (data.carbon_footprint > 2) recommendations.push({ icon: "🌱", text: "Carbon footprint elevated. Running AC at 26°C instead of 22°C reduces load by ~25%.", saving: "Save ~300W" })
-  if (data.ml?.anomaly_score > 50) recommendations.push({ icon: "⚠️", text: `Anomaly detected (${data.ml.anomaly_score}% probability). Unusual load spike — check ${dominantAppliance || "appliances"}.`, saving: undefined })
-  if (data.ml?.hmm_state === "High Usage") recommendations.push({ icon: "📊", text: "HMM model detects high-usage regime. This is a peak consumption window — optimal time to defer non-essential loads.", saving: undefined })
-  if (recommendations.length === 0) recommendations.push({ icon: "✅", text: "All systems normal. Consumption is within efficient range.", saving: undefined })
-
-  return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=DM+Sans:wght@300;400;500&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: ${C.bg}; font-family: 'DM Sans', sans-serif; color: ${C.text}; }
-        .device-toggle { cursor: pointer; transition: all 0.2s; }
-        .device-toggle:hover { opacity: 0.8; }
-      `}</style>
-
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 32px 80px" }}>
-
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 32 }}>
-          <div>
-            <div style={{ fontSize: 10, color: C.muted, letterSpacing: "0.15em", fontFamily: "'Orbitron',monospace", marginBottom: 8 }}>CONSUMER DASHBOARD</div>
-            <h1 style={{ fontFamily: "'Orbitron',monospace", fontSize: 26, fontWeight: 900, color: "#fff", marginBottom: 4 }}>Residential Monitor</h1>
-            <p style={{ fontSize: 13, color: C.muted }}>Live appliance disaggregation · ML-powered insights</p>
-          </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            {(["postpaid", "prepaid"] as const).map(m => (
-              <button key={m} onClick={() => setMode(m)} style={{
-                padding: "8px 18px", borderRadius: 8, cursor: "pointer",
-                fontFamily: "'Orbitron',monospace", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                background: mode === m ? `${C.accent}18` : "transparent",
-                border: `1px solid ${mode === m ? C.accent + "50" : "rgba(255,255,255,0.08)"}`,
-                color: mode === m ? C.accent : C.muted,
-                transition: "all 0.2s",
-              }}>{m.toUpperCase()}</button>
-            ))}
-            <button onClick={() => setPaused(p => !p)} style={{
-              padding: "8px 18px", borderRadius: 8, cursor: "pointer",
-              fontFamily: "'Orbitron',monospace", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-              background: paused ? `${C.amber}18` : "transparent",
-              border: `1px solid ${paused ? C.amber + "50" : "rgba(255,255,255,0.08)"}`,
-              color: paused ? C.amber : C.muted,
-            }}>{paused ? "▶ RESUME" : "⏸ PAUSE"}</button>
-          </div>
+      <Card title="Load-shedding impact — this session" badge="LIVE ESTIMATE">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          <AnimatedKpiMetric label="Load shed now" value={`${shedActiveKw} kW`} color={C.amber} sub={`${Object.values(switches).filter(Boolean).length} module(s) shed`} />
+          <AnimatedKpiMetric label="Energy saved" value={`${fmt(shedSavedKwh)} kWh`} color={C.green} />
+          <AnimatedKpiMetric label="Cost saved" value={`₹${fmt(shedSavedRupees, 0)}`} color={C.accent} sub={`@ ₹${GRID_TARIFF_PER_KWH}/kWh genset-equivalent`} />
+          <AnimatedKpiMetric label="Projected monthly recoverable" value={`₹${fmt(projectedMonthlyRupees, 0)}`} color={C.blue} sub="from standby/vampire load alone" />
         </div>
+        <p style={{ color: C.muted, fontSize: 10.5, margin: "14px 0 0", lineHeight: 1.6 }}>
+          Live figures track modules you shed below; the monthly projection assumes ~35% of current standby load is realistically recoverable through scheduling. CO₂ avoided this session: <strong style={{ color: C.green }}>{fmt(shedSavedCo2)} kg</strong>.
+        </p>
+      </Card>
 
-        {/* ML Insight Strip — NEW */}
-        <MLStrip ml={data.ml} />
-
-        {/* Row 1: KPIs */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
-          <SectionCard style={{ padding: "20px 24px" }}>
-            <SectionTitle>Billing</SectionTitle>
-            <StatRow label="Current Bill" value={`₹${data.current_bill?.toFixed(0)}`} mono color={C.accent} />
-            <StatRow label="End-Month Est." value={`₹${data.predicted_end_month?.toFixed(0)}`} mono color={C.amber} />
-            <StatRow label="Total Load" value={`${totalLoad}W`} mono color={C.accent} />
-            <StatRow label="Financial Stability" value={`${data.financial_stability}%`} color={data.financial_stability > 75 ? C.green : C.amber} />
-          </SectionCard>
-
-          <SectionCard>
-            <SectionTitle>Efficiency & Carbon</SectionTitle>
-            <div style={{ display: "flex", justifyContent: "space-around", alignItems: "center", paddingTop: 8 }}>
-              <GaugeArc value={data.efficiency_score} max={100} color={data.efficiency_score > 70 ? C.green : C.amber} label="Efficiency" unit="/ 100" />
-              <GaugeArc value={data.carbon_footprint} max={5} color={data.carbon_footprint > 3 ? C.red : C.green} label="Carbon" unit="kg CO₂" />
-            </div>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionTitle>{mode === "prepaid" ? "Prepaid Balance" : "Account Status"}</SectionTitle>
-            {mode === "prepaid" ? (
-              <>
-                <div style={{ textAlign: "center" as const, padding: "12px 0 20px" }}>
-                  <div style={{ fontSize: 10, color: C.muted, letterSpacing: "0.1em", marginBottom: 8, textTransform: "uppercase" as const }}>Balance Remaining</div>
-                  <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 32, fontWeight: 700, color: riskColor(data.cutoff_risk) }}>
-                    ₹{data.prepaid_balance?.toFixed(0)}
-                  </div>
-                  <div style={{ marginTop: 10 }}><RiskBadge level={data.cutoff_risk} /></div>
-                </div>
-                <StatRow label="Days Remaining" value={`${data.days_left} days`} />
-                <StatRow label="Daily Cost" value={`₹${(data.current_bill / new Date().getDate()).toFixed(1)}`} />
-              </>
-            ) : (
-              <div style={{ padding: "8px 0" }}>
-                {[
-                  { label: "Peak Hour Risk", value: totalLoad > 4000 ? "HIGH" : totalLoad > 3000 ? "MODERATE" : "LOW" },
-                  { label: "Bill Shock Risk", value: data.predicted_end_month > 6000 ? "HIGH" : data.predicted_end_month > 4000 ? "MODERATE" : "LOW" },
-                  { label: "Anomaly Risk", value: data.ml?.anomaly_score > 70 ? "HIGH" : data.ml?.anomaly_score > 40 ? "MODERATE" : "LOW" },
-                ].map((s, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid rgba(0,229,255,0.06)` }}>
-                    <span style={{ fontSize: 12, color: C.muted }}>{s.label}</span>
-                    <RiskBadge level={s.value} />
+      <section style={{ display: "grid", gridTemplateColumns: "minmax(440px, 1.8fr) minmax(420px, 1.4fr)", gap: 18, alignItems: "stretch" }}>
+        <article style={{ width: "100%" }}>
+          <Card title="AI smart recommendations + module load-shedding switches">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14 }}>
+              <div style={{ display: "grid", gap: 8 }}>
+                {[{text: "Defer non-essential lab load during the current diesel-only window.", severity: "info"}, {text: "Heating demand rising with ambient temperature drop; check insulation zone 3.", severity: "warning"}, {text: "Keep life-support and comms backup above the emergency dispatch threshold.", severity: "info"}, {text: faultAlert, severity: "warning"}].map((r, idx) => (
+                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, background: idx === 0 ? "rgba(255,179,0,0.08)" : "rgba(255,255,255,0.025)", border: `1px solid ${idx === 0 ? C.amber : C.border}`, borderRadius: 10, padding: "9px 11px" }}>
+                    <span style={{ width: 24, height: 24, borderRadius: "50%", background: r.severity === "warning" ? `${C.red}22` : `${C.accent}22`, color: r.severity === "warning" ? C.red : C.accent, border: `1px solid ${r.severity === "warning" ? C.red : C.accent}66`, fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>{r.severity === "warning" ? "!" : "i"}</span>
+                    <span style={{ color: C.text, fontSize: 11, lineHeight: 1.45 }}>{r.text}</span>
                   </div>
                 ))}
               </div>
-            )}
-          </SectionCard>
-
-          {/* New Stat: Gamification / Benchmarking */}
-          <SectionCard style={{ padding: "20px 24px" }}>
-            <SectionTitle>Community Benchmark</SectionTitle>
-            <StatRow label="Neighborhood Avg" value={`${data.neighborhood_avg?.toFixed(0)}W`} mono />
-            <StatRow
-              label="Vs Neighborhood"
-              value={data.user_comparison_pct > 0 ? `+${data.user_comparison_pct}%` : `${data.user_comparison_pct}%`}
-              color={data.user_comparison_pct > 0 ? "#ff5252" : C.green}
-              mono
-            />
-            <div style={{ marginTop: 12, padding: "10px", background: "rgba(255,255,255,0.03)", borderRadius: 8, fontSize: 11, color: C.text, border: `1px solid rgba(255,255,255,0.05)` }}>
-              {data.user_comparison_pct < 0
-                ? "🎉 You are more efficient than similar homes in your area!"
-                : "💡 Reduce usage to improve your neighborhood rank."}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(180px, 1fr))", gap: 12 }}>
+                {MODULES.map(module => {
+                  const isOn = Boolean(switches[module])
+                  return (
+                    <button key={module} onClick={() => toggleModule(module)} className="be-switch" style={{ textAlign: "left", padding: "16px 18px", borderRadius: 12, border: `1px solid ${isOn ? C.amber : C.border}`, background: isOn ? "rgba(255,179,0,0.12)" : "rgba(0,0,0,0.22)", color: isOn ? C.amber : C.text, cursor: "pointer", boxShadow: isOn ? `0 0 0 1px ${C.amber}33 inset, 0 0 15px ${C.amber}12` : "none", minHeight: 84, display: "flex", flexDirection: "column", justifyContent: "center", transition: "all 260ms ease" }}>
+                      <strong style={{ fontFamily: "Inter, Segoe UI, Arial, sans-serif", fontSize: 14, fontWeight: 700 }}>{module}</strong>
+                      <div style={{ fontSize: 10, marginTop: 7, color: isOn ? C.amber : C.muted, letterSpacing: "0.08em", textTransform: "uppercase" }}>{isOn ? "LOAD SHED REQUESTED · ~6 kW reclaimed" : "AVAILABLE FOR SHEDDING"}</div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-          </SectionCard>
-        </div>
+          </Card>
+        </article>
+      </section>
 
-        {/* Row 2: Appliance Cards + Remote Control */}
-        <SectionCard style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-            <SectionTitle>Appliance Disaggregation — Live</SectionTitle>
-            <div style={{ fontSize: 11, color: C.muted }}>Click card to toggle remote shutdown</div>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 12 }}>
-            {applianceData.map((a, i) => (
-              <div key={a.name} className="device-toggle" onClick={() => toggleDevice(a.name)}>
-                <ApplianceCard
-                  name={a.name}
-                  watt={a.value}
-                  pct={(a.value / totalLoad) * 100 || 0}
-                  color={APP_COLORS[i % 5]}
-                  isOff={shutdown[a.name] || a.value === 0}
-                  isDominant={a.name.toLowerCase() === dominantAppliance.toLowerCase()}
-                />
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-
-        {/* Row 2.5: Ghost Load and Appliance Health (NEW) */}
-        {data.appliance_health && (
-          <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 24, marginBottom: 24 }}>
-            {/* Vampire Power Insights */}
-            <SectionCard>
-              <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16 }}>
-                <span style={{ fontSize: 24 }}>🧛‍♂️</span>
-                <SectionTitle>Ghost Load Tracking</SectionTitle>
-              </div>
-              <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 32, fontWeight: 700, color: C.text, marginBottom: 8 }}>
-                {data.ghost_load_w?.toFixed(0)}W
-              </div>
-              <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.6, marginBottom: 16 }}>
-                This is your "always-on" vampire power trace while your house is asleep.
-              </p>
-              <div style={{ background: `${C.green}18`, border: `1px solid ${C.green}40`, borderRadius: 8, padding: 12 }}>
-                <span style={{ fontSize: 10, color: C.green, letterSpacing: "0.08em", textTransform: "uppercase" as const }}>Potential Savings</span>
-                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 16, fontWeight: 700, color: C.green, marginTop: 4 }}>
-                  ₹{data.potential_savings?.toFixed(0)} / mo
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(170px, 1fr))", gap: 12, marginTop: 18 }}>
+        <Card title="Station Load Health & Intelligence">
+          <div style={{ display: "grid", gap: 10 }}>
+            {CHANNELS.map((channel, index) => {
+              const emphasized = index === 0 && data.simulation?.blizzard_mode
+              return (
+                <div key={channel} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, gap: 10 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 140, color: C.text }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: emphasized ? C.amber : C.green, boxShadow: `0 0 5px ${emphasized ? C.amber : C.green}`, display: "inline-block" }} />
+                    <span>{channel}</span>
+                  </span>
+                  <span style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, flex: 1 }}>
+                    <span className="be-status-pill" style={{ background: emphasized ? `${C.amber}22` : `${C.green}22`, border: `1px solid ${emphasized ? C.amber : C.green}66`, color: emphasized ? C.amber : C.green, padding: "2px 10px", borderRadius: 20, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase" }}>{emphasized ? "Insulation review" : "Nominal"}</span>
+                  </span>
                 </div>
-              </div>
-            </SectionCard>
-
-            {/* Appliance Health intelligence */}
-            <SectionCard>
-              <SectionTitle>Appliance Health & Upgrade Intelligence</SectionTitle>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
-                {Object.entries(data.appliance_health).map(([app, health]: any) => (
-                  <div key={app} style={{
-                    background: health.upgrade_recommended ? "rgba(255,82,82,0.05)" : "rgba(0,0,0,0.3)",
-                    border: `1px solid ${health.upgrade_recommended ? C.red + "40" : C.border}`,
-                    borderRadius: 10, padding: "12px 14px"
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{app}</span>
-                      <span style={{ fontFamily: "'Orbitron',monospace", fontSize: 12, color: health.score > 80 ? C.green : health.score > 60 ? C.amber : C.red }}>
-                        {health.score}/100
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 10, color: C.muted }}>Status: <span style={{ color: "white" }}>{health.status}</span></div>
-                    {health.upgrade_recommended && (
-                      <div style={{ marginTop: 8 }}>
-                        <Badge label="UPGRADE RECOMMENDED" color={C.red} />
-                        <div style={{ fontSize: 9, color: C.muted, marginTop: 6, lineHeight: 1.4 }}>
-                          Consuming more power than baseline specs. Upgrading could save ~10-15%.
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </SectionCard>
+              )
+            })}
           </div>
-        )}
-
-        {/* ── NEW: Reactive & Apparent Power per appliance ── */}
-        {data.power_breakdown && <PowerBreakdownTable data={data.power_breakdown} />}
-
-        {/* ── NEW: Vampire / Standby Load by time-of-day ── */}
-        {data.vampire_tod && <VampireTOD data={data.vampire_tod} />}
-
-        {/* ── NEW: Duty Cycle & Usage Duration Histogram ── */}
-        {data.duty_cycle && <DutyCycleHistogram data={data.duty_cycle} />}
-
-        {/* ── NEW: Indian ToU Cost Optimisation ── */}
-        {data.tou && <TouOptimiser tou={data.tou} />}
-
-        {/* ── NEW: Occupancy Inference ── */}
-        {data.occupancy && <OccupancyPanel occ={data.occupancy} />}
-
-        {/* Row 3: 3D House */}
-        <SectionCard style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
-            <div>
-              <SectionTitle>Live Home Energy Visualisation</SectionTitle>
-              <p style={{ fontSize: 12, color: C.muted, marginTop: -12, lineHeight: 1.6 }}>Windows glow when appliances are active. Wall colour shifts with load level.</p>
-            </div>
-            {data.ml && (
-              <div style={{ textAlign: "right" as const }}>
-                <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>HMM STATE</div>
-                <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 13, color: C.purple }}>{data.ml.hmm_state}</div>
-              </div>
-            )}
-          </div>
-          <div style={{ height: 340, borderRadius: 12, overflow: "hidden", background: "rgba(0,0,0,0.3)", border: `1px solid ${C.border}` }}>
-            <HouseScene appliances={appliances} totalLoad={totalLoad} efficiency={data.efficiency_score ?? 72} />
-          </div>
-        </SectionCard>
-
-        {/* Row 4: Charts */}
-        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 24, marginBottom: 24 }}>
-          <SectionCard>
-            <SectionTitle>Live Load vs LSTM Forecast</SectionTitle>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={history}>
-                <defs>
-                  <linearGradient id="loadGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={C.accent} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={C.accent} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="rgba(0,229,255,0.06)" />
-                <XAxis dataKey="t" hide />
-                <YAxis stroke={C.muted} tick={{ fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#0a1929", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}
-                  formatter={(v: any, n: any) => [`${v}W`, n === "load" ? "Actual" : "LSTM Forecast"]} />
-                <Area type="monotone" dataKey="load" stroke={C.accent} fill="url(#loadGrad)" strokeWidth={2} />
-                <ReferenceLine y={data.ml?.lstm_forecast_w ?? 0} stroke={C.amber} strokeDasharray="4 3"
-                  label={{ value: "Forecast", fill: C.amber, fontSize: 9, position: "right" }} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </SectionCard>
-
-          <SectionCard>
-            <SectionTitle>Usage Distribution</SectionTitle>
-            <ResponsiveContainer width="100%" height={220}>
-              <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={72} innerRadius={36} labelLine={false} label={renderCustomLabel}>
-                  {pieData.map((_, i) => <Cell key={i} fill={APP_COLORS[i % 5]} opacity={0.85} />)}
-                </Pie>
-                <Tooltip contentStyle={{ background: "#0a1929", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} formatter={(v: any, n: any) => [`${v}W`, n]} />
-              </PieChart>
-            </ResponsiveContainer>
-          </SectionCard>
-        </div>
-
-        {/* Row 5: Carbon Trend */}
-        <SectionCard style={{ marginBottom: 24 }}>
-          <SectionTitle>Carbon Footprint Trend</SectionTitle>
-          <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={history}>
-              <defs>
-                <linearGradient id="carbonGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#ff5252" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#ff5252" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="rgba(255,82,82,0.06)" />
-              <XAxis dataKey="t" hide />
-              <YAxis stroke={C.muted} tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}kg`} />
-              <Tooltip contentStyle={{ background: "#0a1929", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12 }} formatter={(v: any) => [`${v} kg CO₂`, "Carbon"]} />
-              <Area type="monotone" dataKey="carbon" stroke="#ff5252" fill="url(#carbonGrad)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </SectionCard>
-
-        {/* NILM Predict — NEW */}
-        <NilmPredict />
-
-        {/* What-If Simulator — NEW */}
-        <UpgradeSimulator />
-
-        {/* Smart Plug Control — Live Devices */}
-        <SmartPlugSection />
-
-        {/* AI Recommendations */}
-        <SectionCard>
-          <SectionTitle>AI Smart Recommendations</SectionTitle>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 12 }}>
-            {recommendations.map((r, i) => (
-              <div key={i} style={{
-                background: "rgba(0,0,0,0.25)",
-                border: `1px solid ${r.text.includes("normal") ? C.green + "40" : C.amber + "30"}`,
-                borderLeft: `3px solid ${r.text.includes("normal") ? C.green : r.text.includes("Anomaly") ? C.red : C.amber}`,
-                borderRadius: 10, padding: "14px 16px",
-                display: "flex", gap: 12, alignItems: "flex-start",
-              }}>
-                <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>{r.icon}</span>
-                <div>
-                  <p style={{ fontSize: 13, color: C.text, lineHeight: 1.6 }}>{r.text}</p>
-                  {r.saving && <span style={{ fontSize: 10, color: C.green, fontWeight: 600, letterSpacing: "0.06em", marginTop: 4, display: "block" }}>{r.saving}</span>}
+        </Card>
+        <Card title="Reactive & Apparent Power">
+          <div style={{ display: "grid", gap: 10 }}>
+            {CHANNELS.map((channel, index) => {
+              const value = Number(loads[channel] ?? 0)
+              const trend = index % 2 === 0 ? "↑" : "↓"
+              const dataSpark = [Math.max(0.7, value * .82), value * 1.03, value * 1.06, value * 1.01, value * .96]
+              return (
+                <div key={channel} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, gap: 10 }}>
+                  <span style={{ color: C.text }}>{channel}</span>
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, color: C.accent, flex: 1 }}>
+                    <span style={{ color: index % 2 === 0 ? C.green : C.muted, fontSize: 11, fontWeight: 700, minWidth: 14 }}>{trend}</span>
+                    <span>{(value * 1.08).toFixed(1)} kVA · PF {index < 2 ? "0.88" : "0.96"}</span>
+                  </span>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
-        </SectionCard>
+        </Card>
+        <Card title="Standby / Vampire Load">
+          <div style={{ height: 110, width: "100%" }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={[{time:"00", value:8},{time:"06", value:10},{time:"12", value:12},{time:"18", value:15},{time:"24", value:11}]} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                <Line type="monotone" dataKey="value" stroke={C.purple} strokeWidth={2} dot={{r:3,fill:C.purple}} animationDuration={440} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        <Card title="Duty Cycle">
+          <div style={{ display: "grid", gap: 11 }}>
+            {CHANNELS.map((channel, index) => {
+              const pct = index === 1 ? 100 : 54 + index * 8
+              const width = Math.max(12, Math.min(100, pct))
+              return (
+                <div key={channel} style={{ display: "flex", alignItems: "center", fontSize: 12, gap: 12 }}>
+                  <span style={{ minWidth: 110, color: C.text }}>{channel}</span>
+                  <span style={{ display: "flex", alignItems: "center", flex: 1, gap: 8, justifyContent: "flex-end" }}>
+                    <span style={{ height: 4, width: 84, background: "rgba(255,255,255,0.08)", borderRadius: 4, overflow: "hidden", display: "inline-block", border: `1px solid ${C.border}` }}>
+                      <span style={{ display: "block", height: "100%", width: `${width}%`, background: index === 0 ? C.amber : index === 1 ? C.red : index === 2 ? C.accent : index === 3 ? C.purple : C.green, borderRadius: 4 }} />
+                    </span>
+                    <strong style={{ color: C.green, minWidth: 44, textAlign: "right" }}><AnimatedNumber value={pct} decimals={0} />%</strong>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
+        <Card title="Crew Regime">
+          <div style={{ color: C.purple, fontSize: 24, fontWeight: 700, marginBottom: 10, fontFamily: "'Instrument Serif',serif", fontStyle: "italic" }}>{crewRegime}</div>
+          <p style={{ color: C.muted, fontSize: 12, lineHeight: 1.6, margin: 0 }}>The hidden Markov model tracks station operating patterns. Load planning follows crew presence and mission season.</p>
+          <div style={{ marginTop: 16, color: C.text, fontSize: 12 }}>Weather regime: <strong>{data.ml?.hmm_regime ?? "calm"}</strong></div>
+        </Card>
+      </section>
 
-      </div>
-    </>
+      <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 18 }}>
+        <Card title="What-if simulator — station efficiency upgrades">
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <select value={upgradeType} onChange={event => setUpgradeType(event.target.value)} style={{ background: "#0a1929", color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, padding: 10 }}>
+              <option value="module_insulation">Module insulation upgrade</option>
+              <option value="heater_efficiency">Heater efficiency upgrade</option>
+            </select>
+            <button onClick={runUpgrade} disabled={running} className="be-btn" style={{ background: `${C.accent}18`, color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: 8, padding: "10px 16px", cursor: running ? "wait" : "pointer" }}>
+              {running ? "RUNNING…" : "RUN SCENARIO"}
+            </button>
+            {upgrade && <span style={{ color: C.green, fontSize: 12 }}>Projected reduction: {upgrade.reduction_pct}% · {upgrade.target_w} W target load</span>}
+          </div>
+        </Card>
+
+        <Card title="Station module scene">
+          <StationScene />
+        </Card>
+      </section>
+    </main>
   )
 }

@@ -1,13 +1,18 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Oxanium:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;700&family=Rajdhani:wght@400;600;700&display=swap');
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #04090f;
+  --foreground: #c8dbe8;
+  --nilm-body-font: "Inter", "DM Sans", "Rajdhani", "Segoe UI", Arial, Helvetica, sans-serif;
+  --nilm-title-font: "Inter", "Segoe UI", Arial, Helvetica, sans-serif;
+  --nilm-number-font: "Oxanium", "Inter", "JetBrains Mono", "Orbitron", monospace;
+  --nilm-mono-font: "Oxanium", "Inter", "JetBrains Mono", "Orbitron", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
 }
 
 html,
@@ -18,10 +23,60 @@ body {
 
 body {
   color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(circle at 72% 14%, rgba(0, 229, 255, 0.08), transparent 18%),
+    radial-gradient(circle at 30% 83%, rgba(57, 255, 20, 0.07), transparent 20%),
+    var(--background);
+  font-family: var(--nilm-body-font);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #04090f;
+    --foreground: #c8dbe8;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background:
+    radial-gradient(circle at 72% 14%, rgba(0, 229, 255, 0.08), transparent 18%),
+    radial-gradient(circle at 30% 83%, rgba(57, 255, 20, 0.07), transparent 20%),
+    var(--background);
+  font-family: var(--nilm-body-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -80px;
+  background-image:
+    linear-gradient(rgba(0, 229, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.035) 1px, transparent 1px);
+  background-size: 34px 34px, 34px 34px;
+  transform: perspective(1200px) rotateX(8deg) rotateZ(-2deg) translateY(-2%);
+  transform-origin: center center;
+  pointer-events: none;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 1), transparent 100%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 229, 255, 0.24);
+  box-shadow: inset 0 0 42px rgba(0, 229, 255, 0.16), 0 0 80px rgba(0, 229, 255, 0.08);
+  left: 5%;
+  top: 4%;
+  filter: blur(1px);
+  transform: perspective(1000px) rotateX(12deg) rotateY(-15deg);
+  pointer-events: none;
 }
 
 * {
@@ -33,6 +88,33 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+main {
+  position: relative;
+  z-index: 1;
+}
+
+.nilm-3d-panel {
+  position: relative;
+  transform-style: preserve-3d;
+  transform: perspective(1200px) rotateX(3deg);
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  box-shadow: 0 18px 50px rgba(0, 229, 255, 0.08), inset 0 0 24px rgba(0, 229, 255, 0.04);
+}
+
+.nilm-3d-panel::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transform: translateZ(10px);
+  pointer-events: none;
+}
+
+.nilm-scanline {
+  background-image: repeating-linear-gradient(180deg, transparent, transparent 3px, rgba(255,255,255,0.035) 4px);
 }
 
 @media (prefers-color-scheme: dark) {

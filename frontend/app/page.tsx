@@ -31,57 +31,57 @@ const CARDS = [
   {
     href: "/professor",
     icon: "🔬",
-    title: "Research",
-    subtitle: "Model Analytics",
-    desc: "Confusion matrix, ROC curves, live disaggregation and NILM equations across all 5 trained models.",
+    title: "Research/Admin",
+    subtitle: "Model analytics",
+    desc: "Confusion matrix, ROC and V-I diagnostics, model metrics, and station research telemetry for the five-model stack.",
     color: "#00e5ff",
-    stat: "94.0%",
-    statLabel: "Accuracy",
-    badge: "5 MODELS",
+    stat: "5",
+    statLabel: "Models",
+    badge: "RESEARCH",
   },
   {
     href: "/user",
     icon: "🏠",
-    title: "Consumer",
-    subtitle: "Smart Home",
-    desc: "Real-time appliance monitoring, billing, carbon footprint and 3D energy-aware room visualisation.",
+    title: "Station Ops",
+    subtitle: "Polar station operations",
+    desc: "Critical-load priorities, living quarters, lab and comms health, crew regime, and live station-safety alerts.",
     color: "#39ff14",
-    stat: "₹6.5",
-    statLabel: "Tariff /kWh",
-    badge: "LIVE",
+    stat: "24/7",
+    statLabel: "Ops",
+    badge: "STATION",
   },
   {
     href: "/industrial",
-    icon: "🏭",
-    title: "Industrial",
-    subtitle: "Demand Management",
-    desc: "Transformer load, peak demand forecast, phase balance, power factor and AI peak shaving recommendations.",
+    icon: "⚙️",
+    title: "Renewable & Microgrid",
+    subtitle: "Generation and storage",
+    desc: "Renewable dispatch, solar and wind contribution, battery SOC, diesel margin, and genset balancing across the polar microgrid.",
     color: "#ffb300",
-    stat: "600 kVA",
-    statLabel: "Contracted",
-    badge: "3-PHASE",
+    stat: "91%",
+    statLabel: "Renewable Mix",
+    badge: "MICROGRID",
   },
   {
     href: "/grid",
-    icon: "🗺️",
-    title: "DISCOM",
-    subtitle: "Grid Control Center",
-    desc: "10-feeder hexagonal map, AT&C loss monitoring, surge zone detection and automated interventions.",
+    icon: "⛽",
+    title: "Fuel & Logistics",
+    subtitle: "Resupply and runway",
+    desc: "Fuel reserve, burn rate, weather-normalised efficiency loss, logistics risk, and diesel resupply planning for remote stations.",
     color: "#e040fb",
-    stat: "10",
-    statLabel: "Feeders",
-    badge: "DISCOM",
+    stat: "14d",
+    statLabel: "Runway",
+    badge: "LOGISTICS",
   },
   {
     href: "/infer",
     icon: "⚡",
-    title: "Live Inference",
-    subtitle: "Real ML Engine",
-    desc: "Feed any wattage into all 5 trained models simultaneously. RF classifies, HMM detects regime, LSTM forecasts, LogReg flags anomalies.",
+    title: "Live Playground",
+    subtitle: "Forecast and inference",
+    desc: "Five-model live inference loop for classifying regime, forecasting load, scoring anomalies, and optimizing station dispatch.",
     color: "#ff9f00",
     stat: "5",
     statLabel: "Models Live",
-    badge: "REAL ML",
+    badge: "FORECAST",
     highlight: true,
   },
 ]
@@ -139,7 +139,7 @@ function DashCard({ card, index }: { card: typeof CARDS[0]; index: number }) {
               transform: hovered ? "scale(1.1)" : "scale(1)",
             }}>{card.icon}</div>
             <div>
-              <div style={{ fontFamily: "'Instrument Serif',serif", fontStyle: "italic", fontSize: 24, fontWeight: 400, letterSpacing: "0.02em", color: "#fff" }}>
+              <div style={{ fontFamily: "Inter, Segoe UI, Arial, sans-serif", fontStyle: "normal", fontSize: 24, fontWeight: 700, letterSpacing: "0.02em", color: "#fff" }}>
                 {card.title}
               </div>
               <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{card.subtitle}</div>
@@ -160,7 +160,7 @@ function DashCard({ card, index }: { card: typeof CARDS[0]; index: number }) {
         {/* Stat + CTA */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 24, fontWeight: 700, color: card.color }}>
+            <div style={{ fontFamily: "'Oxanium', 'Inter', 'JetBrains Mono', monospace", fontSize: 24, fontWeight: 600, color: card.color }}>
               {card.stat}
             </div>
             <div style={{ fontSize: 10, color: C.muted, marginTop: 2, letterSpacing: "0.08em" }}>{card.statLabel}</div>
@@ -204,9 +204,8 @@ export default function HomePage() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;600;700&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #000000; font-family: 'JetBrains Mono', monospace; color: ${C.text}; }
+        body { background: #000000; font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: ${C.text}; }
         @keyframes fadeUp { from{opacity:0;transform:translateY(18px)} to{opacity:1;transform:translateY(0)} }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
         @keyframes slowSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
@@ -242,13 +241,13 @@ export default function HomePage() {
             </span>
           </div>
 
-          <h1 style={{ fontFamily: "'Instrument Serif',serif", fontSize: "clamp(48px,8vw,96px)", fontStyle: "italic",
-            fontWeight: 400, color: "#fff", lineHeight: 1.0, letterSpacing: "-0.02em", marginBottom: 24 }}>
+          <h1 style={{ fontFamily: "Inter, Segoe UI, Arial, sans-serif", fontSize: "clamp(48px,8vw,96px)", fontStyle: "normal",
+            fontWeight: 700, color: "#fff", lineHeight: 1.0, letterSpacing: "-0.02em", marginBottom: 24 }}>
             Bharat Energy AI
           </h1>
           <p style={{ fontSize: "clamp(14px,1.5vw,17px)", color: C.muted, maxWidth: 580,
             margin: "0 auto 48px", lineHeight: 1.7 }}>
-            Non-Intrusive Load Monitoring powered by 5 ML models. Real-time appliance disaggregation,
+            Non-Intrusive Load Monitoring powered by 5 ML models. Real-time station load disaggregation,
             demand forecasting, anomaly detection and grid intelligence.
           </p>
 
@@ -258,7 +257,7 @@ export default function HomePage() {
               { target: 94, suffix: "%", label: "Model Accuracy" },
               { target: 5,  suffix: "",  label: "Trained Models" },
               { target: 5,  suffix: "",  label: "Dashboards" },
-              { target: 10, suffix: "",  label: "Grid Feeders" },
+              { target: 5, suffix: "",  label: "Load Channels" },
             ].map(s => (
               <div key={s.label} style={{ textAlign: "center" as const }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 40, fontWeight: 700, color: "#00f6ff" }}>

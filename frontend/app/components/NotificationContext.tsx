@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from "react"
+import { API_URL } from "../lib/api"
 
 // ─── Types ────────────────────────────────────────────────
 export type AlertSeverity = "critical" | "warning" | "info" | "success"
@@ -26,6 +27,10 @@ interface NotificationContextType {
   clearAll: () => void
   panelOpen: boolean
   setPanelOpen: (open: boolean) => void
+  blizzardMode: boolean
+  polarNight: boolean
+  setBlizzardMode: (enabled: boolean) => void
+  setPolarNight: (enabled: boolean) => void
 }
 
 // ─── Context ──────────────────────────────────────────────
@@ -47,6 +52,38 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [panelOpen, setPanelOpen] = useState(false)
   const recentKeys = useRef<Map<string, number>>(new Map())
+  const [blizzardMode, setBlizzardModeState] = useState(false)
+  const [polarNight, setPolarNightState] = useState(false)
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("bharat-energy-simulation")
+    if (!saved) return
+    try {
+      const mode = JSON.parse(saved)
+      setBlizzardModeState(Boolean(mode.blizzard_mode))
+      setPolarNightState(Boolean(mode.polar_night))
+    } catch {}
+  }, [])
+
+  const syncSimulation = useCallback((nextBlizzard: boolean, nextPolarNight: boolean) => {
+    const mode = { blizzard_mode: nextBlizzard, polar_night: nextPolarNight }
+    window.localStorage.setItem("bharat-energy-simulation", JSON.stringify(mode))
+    fetch(`${API_URL}/simulation-mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(mode),
+    }).catch(() => {})
+  }, [])
+
+  const setBlizzardMode = useCallback((enabled: boolean) => {
+    setBlizzardModeState(enabled)
+    syncSimulation(enabled, polarNight)
+  }, [polarNight, syncSimulation])
+
+  const setPolarNight = useCallback((enabled: boolean) => {
+    setPolarNightState(enabled)
+    syncSimulation(blizzardMode, enabled)
+  }, [blizzardMode, syncSimulation])
 
   const addAlert = useCallback((alert: Omit<Alert, "id" | "timestamp" | "read">) => {
     const key = makeId(alert.source, alert.title)
@@ -83,7 +120,8 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   return (
     <NotificationContext.Provider value={{
-      alerts, unreadCount, addAlert, markAllRead, markRead, clearAll, panelOpen, setPanelOpen
+      alerts, unreadCount, addAlert, markAllRead, markRead, clearAll, panelOpen, setPanelOpen,
+      blizzardMode, polarNight, setBlizzardMode, setPolarNight,
     }}>
       {children}
     </NotificationContext.Provider>
@@ -99,16 +137,16 @@ export function useAlertEngine() {
     const check = async () => {
       // ── Consumer ──
       try {
-        const r = await fetch("http://127.0.0.1:8000/consumer-dashboard")
+        const r = await fetch(`${API_URL}/consumer-dashboard`)
         const d = await r.json()
         if (d.cutoff_risk === "CRITICAL")
-          addAlert({ severity: "critical", source: "consumer", title: "Prepaid Balance Critical", message: "Balance is critically low — disconnect risk imminent.", value: `₹${d.prepaid_balance?.toFixed(0)}` })
+          addAlert({ severity: "critical", source: "consumer", title: "Fuel Reserve Critical", message: "Fuel reserve is critically low — resupply risk imminent.", value: `${d.fuel?.reserve_liters ?? 0} L` })
         else if (d.cutoff_risk === "WARNING")
-          addAlert({ severity: "warning", source: "consumer", title: "Prepaid Balance Low", message: "Recharge soon to avoid service interruption.", value: `₹${d.prepaid_balance?.toFixed(0)}` })
+          addAlert({ severity: "warning", source: "consumer", title: "Fuel Reserve Low", message: "Schedule resupply soon to avoid service interruption.", value: `${d.fuel?.reserve_liters ?? 0} L` })
         if (d.total_load > 4500)
           addAlert({ severity: "critical", source: "consumer", title: "Extreme Load Detected", message: "Total residential load exceeds safe threshold.", value: `${d.total_load}W` })
         else if (d.total_load > 3500)
-          addAlert({ severity: "warning", source: "consumer", title: "High Load Warning", message: "Consider switching off non-essential appliances.", value: `${d.total_load}W` })
+          addAlert({ severity: "warning", source: "consumer", title: "High Station Load Warning", message: "Consider shedding non-essential module load.", value: `${d.total_load}W` })
         if (d.efficiency_score < 50)
           addAlert({ severity: "warning", source: "consumer", title: "Low Efficiency Score", message: "Energy efficiency is below recommended levels.", value: `${d.efficiency_score}/100` })
         if (d.carbon_footprint > 3.5)
@@ -117,42 +155,38 @@ export function useAlertEngine() {
 
       // ── Industrial ──
       try {
-        const r = await fetch("http://127.0.0.1:8000/industrial-dashboard")
+        const r = await fetch(`${API_URL}/renewable-dashboard`)
         const d = await r.json()
         if (d.overload_risk === "HIGH")
-          addAlert({ severity: "critical", source: "industrial", title: "Transformer Overload Risk", message: "Transformer load exceeds 90% — immediate action required.", value: `${d.transformer_load_percent}%` })
+          addAlert({ severity: "critical", source: "industrial", title: "Powerhouse Load Risk", message: "Genset load exceeds 90% — immediate action required.", value: `${d.genset_load_percent}%` })
         else if (d.overload_risk === "MODERATE")
-          addAlert({ severity: "warning", source: "industrial", title: "Transformer Load Elevated", message: "Transformer load above 75% — monitor closely.", value: `${d.transformer_load_percent}%` })
-        if (d.penalty > 0)
-          addAlert({ severity: "warning", source: "industrial", title: "Demand Penalty Incurred", message: `Peak demand exceeded contracted limit by ${d.excess_kva} kVA.`, value: `₹${d.penalty.toLocaleString()}` })
+          addAlert({ severity: "warning", source: "industrial", title: "Powerhouse Load Elevated", message: "Genset load above 75% — monitor closely.", value: `${d.genset_load_percent}%` })
         if (d.power_factor < 0.88)
-          addAlert({ severity: "critical", source: "industrial", title: "Low Power Factor", message: "Power factor below 0.88 — PF penalty applied.", value: `PF ${d.power_factor}` })
+          addAlert({ severity: "critical", source: "industrial", title: "Low Power Factor", message: "Power factor below 0.88 — inspect reactive load.", value: `PF ${d.power_factor}` })
         else if (d.power_factor < 0.92)
           addAlert({ severity: "warning", source: "industrial", title: "Power Factor Warning", message: "Power factor approaching penalty threshold.", value: `PF ${d.power_factor}` })
-        if (d.downtime_risk === "HIGH")
-          addAlert({ severity: "critical", source: "industrial", title: "Machine Downtime Risk", message: "Vibration index indicates high breakdown probability.", value: "HIGH RISK" })
+        if (d.genset_margin_kw < 35)
+          addAlert({ severity: "critical", source: "industrial", title: "Genset Margin Low", message: "Current diesel draw is close to comfortable genset capacity.", value: `${d.genset_margin_kw} kW margin` })
         if (d.imbalance_percent > 12)
           addAlert({ severity: "warning", source: "industrial", title: "Phase Imbalance Detected", message: `R/Y/B phase imbalance at ${d.imbalance_percent}% — may cause motor damage.`, value: `${d.imbalance_percent}%` })
       } catch {}
 
       // ── Grid ──
       try {
-        const r = await fetch("http://127.0.0.1:8000/grid-dashboard")
+        const r = await fetch(`${API_URL}/fuel-dashboard`)
         const d = await r.json()
-        const highRisk = d.feeders?.filter((f: any) => f.risk === "HIGH")
+        const highRisk = Object.entries(d.module_supply_risk ?? {}).filter(([, risk]) => risk === "HIGH")
         if (highRisk?.length > 0)
-          addAlert({ severity: "critical", source: "grid", title: "Feeder Overload Alert", message: `${highRisk.length} feeder(s) in HIGH risk zone: ${highRisk.map((f: any) => f.name).join(", ")}`, value: `${highRisk.length} feeders` })
-        if (d.avg_atc_loss > 12)
-          addAlert({ severity: "critical", source: "grid", title: "AT&C Loss Critical", message: "Average AT&C loss exceeds 12% threshold across feeders.", value: `${d.avg_atc_loss}%` })
-        else if (d.avg_atc_loss > 9)
-          addAlert({ severity: "warning", source: "grid", title: "AT&C Loss Elevated", message: "Aggregate distribution losses above normal range.", value: `${d.avg_atc_loss}%` })
-        if (d.surge_zone)
-          addAlert({ severity: "warning", source: "grid", title: "Surge Zone Active", message: `${d.surge_zone} is the current surge zone. Intervention recommended.`, value: d.surge_zone })
+          addAlert({ severity: "critical", source: "grid", title: "Module Supply Risk", message: `${highRisk.length} module(s) in HIGH supply-risk zone: ${highRisk.map(([name]) => name).join(", ")}`, value: `${highRisk.length} modules` })
+        if (d.fuel?.weather_normalised_efficiency_loss_pct > 12)
+          addAlert({ severity: "critical", source: "grid", title: "Fuel Efficiency Loss Critical", message: "Weather-normalised fuel efficiency loss exceeds the station threshold.", value: `${d.weather_normalised_efficiency_loss_pct}%` })
+        if ((d.unexpected_consumption_flags ?? []).length > 0)
+          addAlert({ severity: "warning", source: "grid", title: "Unexpected Consumption Flag", message: d.unexpected_consumption_flags[0], value: "CHECK EQUIPMENT" })
       } catch {}
 
       // ── Model ──
       try {
-        const r = await fetch("http://127.0.0.1:8000/model-metrics")
+        const r = await fetch(`${API_URL}/model-metrics`)
         const d = await r.json()
         if (d.accuracy < 0.88)
           addAlert({ severity: "warning", source: "research", title: "Model Accuracy Drop", message: "NILM model accuracy has fallen below 88%.", value: `${(d.accuracy * 100).toFixed(1)}%` })

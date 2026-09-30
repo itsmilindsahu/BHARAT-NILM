@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { API_URL } from "../lib/api"
 
 const C = {
   bg:     "#04090f",
@@ -16,18 +17,17 @@ const C = {
 
 const PRESETS = [
   { label: "Standby",  icon: "💤", watts: 80,   color: C.muted  },
-  { label: "Fan",      icon: "💨", watts: 80,   color: C.green  },
-  { label: "Fridge",   icon: "🧊", watts: 200,  color: C.teal   },
-  { label: "TV",       icon: "📺", watts: 180,  color: C.purple },
-  { label: "AC",       icon: "❄️", watts: 1200, color: C.accent },
-  { label: "Geyser",   icon: "🔥", watts: 1500, color: C.amber  },
-  { label: "Washing",  icon: "🫧", watts: 650,  color: C.teal   },
+  { label: "Heating",       icon: "🔥", watts: 1200, color: C.amber  },
+  { label: "Life Support",  icon: "🛟", watts: 250,  color: C.teal   },
+  { label: "Comms",         icon: "📡", watts: 180,  color: C.purple },
+  { label: "Labs",          icon: "🔬", watts: 650,  color: C.accent },
+  { label: "Kitchen-Mess",  icon: "🍽", watts: 500,  color: C.green  },
   { label: "SPIKE",    icon: "⚡", watts: 2800, color: C.red    },
 ]
 
 export default function MeterController() {
   const [watts,     setWatts]     = useState(500)
-  const [label,     setLabel]     = useState("Fan")
+  const [label,     setLabel]     = useState("Heating")
   const [active,    setActive]    = useState(false)
   const [connected, setConnected] = useState(false)
   const [inference, setInference] = useState<any>(null)
@@ -36,12 +36,11 @@ export default function MeterController() {
   const [showSetup, setShowSetup] = useState(false)
   const intervalRef = useRef<any>(null)
 
-  // On mount: figure out API base from current hostname
-  // If opened via QR at http://192.168.x.x:3000/meter,
-  // the backend is at http://192.168.x.x:8000
+  // On mount: prefer the shared environment-backed API URL,
+  // then fall back to the same host as the frontend's origin if needed.
   useEffect(() => {
     const host = window.location.hostname
-    const base = `http://${host}:8000`
+    const base = API_URL || `http://${host}:8000`
     setApiBase(base)
     setIpInput(host)
   }, [])
@@ -94,7 +93,7 @@ export default function MeterController() {
   }
 
   const applyIP = () => {
-    setApiBase(`http://${ipInput}:8000`)
+    setApiBase(ipInput ? `http://${ipInput}:8000` : API_URL)
     setShowSetup(false)
   }
 
@@ -184,7 +183,7 @@ export default function MeterController() {
               }}>APPLY</button>
             </div>
             <div style={{ fontSize:10, color:C.muted, marginTop:8 }}>
-              Current: <span style={{ color:C.accent, fontFamily:"monospace" }}>{apiBase}</span>
+              Current: <span style={{ color:C.accent, fontFamily:"monospace" }}>{apiBase || API_URL}</span>
             </div>
           </div>
         )}

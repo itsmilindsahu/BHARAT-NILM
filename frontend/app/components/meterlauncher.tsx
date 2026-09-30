@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { API_URL } from "../lib/api"
 
 const C = {
   bg:     "#04090f",
@@ -37,7 +38,7 @@ export default function MeterLauncher() {
   useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch("http://127.0.0.1:8000/meter/status")
+        const r = await fetch(`${API_URL}/meter/status`)
         const d = await r.json()
         setPhoneActive(d.source === "phone" && d.active)
         setPhoneWatts(d.active ? d.watts : null)

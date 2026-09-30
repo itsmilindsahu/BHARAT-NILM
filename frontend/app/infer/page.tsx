@@ -1,6 +1,10 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { useNotifications } from "../components/NotificationContext"
+import { SimulationBanner } from "../components/SimulationBanner"
+import { LiveChangesTicker, HeroKpiSparklineRow, useTelemetryTickerTracker } from "../components/ui"
+import { API_URL } from "../lib/api"
 import {
   AreaChart, Area, BarChart, Bar, Cell,
   CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer
@@ -14,9 +18,9 @@ const C = {
   purple: "#b388ff", text: "#c8dbe8", muted: "rgba(200,219,232,0.4)",
 }
 
-const APPLIANCE_COLORS: Record<string, string> = {
-  ac: "#00e5ff", fridge: "#b388ff", geyser: "#ffb300",
-  tv: "#e040fb", washing_machine: "#39ff14", default: "#00e5ff",
+const LOAD_COLORS: Record<string, string> = {
+  heating: "#ffb300", life_support: "#00bcd4", comms: "#b388ff",
+  labs: "#00e5ff", kitchen_mess: "#39ff14", default: "#00e5ff",
 }
 
 const REGIME_COLOR: Record<string, string> = {
@@ -100,14 +104,98 @@ function AnomalyGauge({ score }: { score: number }) {
 
 // ─── Main page ────────────────────────────────────────────
 export default function InferencePage() {
+  const { blizzardMode, polarNight, setBlizzardMode, setPolarNight } = useNotifications()
   const [result, setResult]   = useState<any>(null)
   const [history, setHistory] = useState<any[]>([])
   const [input, setInput]     = useState("1250")
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState("")
   const [streaming, setStreaming] = useState(false)
-  const [baseLoad, setBaseLoad]   = useState("1200")
+  const [baseLoad, setBaseLoad]   = useState("180")
   const esRef = useRef<EventSource | null>(null)
+
+  const [telemetry, setTelemetry] = useState<any>(null)
+  const [loadHistory, setLoadHistory] = useState<number[]>([178, 180, 182, 179, 181])
+  const [lstmHistory, setLstmHistory] = useState<number[]>([175, 176, 178, 177, 178])
+  const [gbHistory, setGbHistory] = useState<number[]>([177, 179, 181, 180, 180])
+  const [anomalyHistory, setAnomalyHistory] = useState<number[]>([12, 14, 15, 13, 14])
+
+  useEffect(() => {
+    const fetchTelem = () => {
+      fetch(`${API_URL}/telemetry`)
+        .then(r => r.json())
+        .then(d => {
+          setTelemetry(d)
+          if (d.load) {
+            setLoadHistory(prev => [...prev.slice(-25), Math.round(d.load)])
+            setLstmHistory(prev => [...prev.slice(-25), Math.round(d.load * 0.97)])
+            setGbHistory(prev => [...prev.slice(-25), Math.round(d.load * 0.99)])
+          }
+        }).catch(() => {})
+    }
+    fetchTelem()
+    const iv = setInterval(fetchTelem, 1200)
+    return () => clearInterval(iv)
+  }, [])
+
+  useEffect(() => {
+    if (result) {
+      if (result.aggregate) setLoadHistory(prev => [...prev.slice(-25), Math.round(result.aggregate)])
+      if (result.lstm_forecast) setLstmHistory(prev => [...prev.slice(-25), Math.round(result.lstm_forecast)])
+      if (result.gb_next_watt) setGbHistory(prev => [...prev.slice(-25), Math.round(result.gb_next_watt)])
+      if (result.anomaly_score !== undefined) {
+        setAnomalyHistory(prev => [...prev.slice(-25), Math.round(result.anomaly_score * 100)])
+      }
+    }
+  }, [result])
+
+  const currentLoad = result?.aggregate ?? telemetry?.load ?? 180
+  const lstmVal = result?.lstm_forecast ?? (currentLoad * 0.97)
+  const gbVal = result?.gb_next_watt ?? (currentLoad * 0.99)
+  const anomalyScore = Math.round((result?.anomaly_score ?? 0.14) * 100)
+
+  const tickerItems = useTelemetryTickerTracker({
+    "Station Load": currentLoad,
+    "LSTM Forecast": lstmVal,
+    "GB Forecast": gbVal,
+    "Anomaly Score": anomalyScore,
+  }, {
+    "Station Load": "kW",
+    "LSTM Forecast": "kW",
+    "GB Forecast": "kW",
+    "Anomaly Score": "%",
+  })
+
+  const heroKpiRows = [
+    {
+      label: "Current Station Load",
+      value: `${typeof currentLoad === "number" ? currentLoad.toFixed(1) : currentLoad} kW`,
+      color: C.accent,
+      data: loadHistory,
+      sub: "Active bus demand",
+    },
+    {
+      label: "LSTM Sequence Forecast",
+      value: `${typeof lstmVal === "number" ? lstmVal.toFixed(1) : lstmVal} kW`,
+      color: "#ff6090",
+      data: lstmHistory,
+      sub: "24-step recurrent model",
+    },
+    {
+      label: "XGBoost Next Step",
+      value: `${typeof gbVal === "number" ? gbVal.toFixed(1) : gbVal} kW`,
+      color: C.green,
+      data: gbHistory,
+      sub: "Gradient boosted forecast",
+    },
+    {
+      label: "Isolation Forest Anomaly",
+      value: `${anomalyScore}%`,
+      color: anomalyScore > 60 ? C.red : C.amber,
+      data: anomalyHistory,
+      sub: "Envelope deviation score",
+    },
+  ]
 
   // ── Single inference ──
   const runInfer = async () => {
@@ -115,7 +203,7 @@ export default function InferencePage() {
     if (isNaN(agg) || agg < 0) { setError("Enter a valid wattage"); return }
     setLoading(true); setError("")
     try {
-      const r = await fetch(`http://127.0.0.1:8000/infer?aggregate=${agg}`)
+      const r = await fetch(`${API_URL}/infer?aggregate=${agg}`)
       if (!r.ok) throw new Error(await r.text())
       const d = await r.json()
       setResult(d)
@@ -130,7 +218,8 @@ export default function InferencePage() {
     if (streaming) {
       esRef.current?.close(); esRef.current = null; setStreaming(false); return
     }
-    const es = new EventSource(`http://127.0.0.1:8000/infer/stream?base_load=${baseLoad}&interval=2`)
+    const params = new URLSearchParams({ base_load: baseLoad, interval: "1.2", blizzard_mode: String(blizzardMode), polar_night: String(polarNight) })
+    const es = new EventSource(`${API_URL}/infer/stream?${params.toString()}`)
     es.onmessage = e => {
       const d = JSON.parse(e.data)
       setResult(d)
@@ -150,7 +239,7 @@ export default function InferencePage() {
     ? Object.entries(result.rf_all_proba).map(([name, prob]) => ({ name, prob })).sort((a: any, b: any) => b.prob - a.prob)
     : []
 
-  const appColor = result ? (APPLIANCE_COLORS[result.rf_label] ?? C.accent) : C.accent
+  const loadColor = result ? (LOAD_COLORS[result.rf_label] ?? C.accent) : C.accent
   const regColor = result ? (REGIME_COLOR[result.hmm_regime] ?? C.amber) : C.amber
 
   return (
@@ -183,10 +272,10 @@ export default function InferencePage() {
               <span style={{ fontSize: 11, color: C.accent, letterSpacing: "0.06em" }}>LIVE INFERENCE</span>
             </div>
             <h1 style={{ fontFamily: "'Orbitron',monospace", fontSize: 20, fontWeight: 900, color: "#fff", letterSpacing: "0.05em" }}>
-              Real-Time ML Inference
+              Polar Station Live Playground
             </h1>
             <p style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>
-              5 trained models — RF · GB · LogReg · HMM · LSTM — running on live smart meter data
+              Toggle blizzard mode or polar night and watch forecasts and optimized dispatch update live
             </p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -198,21 +287,29 @@ export default function InferencePage() {
           </div>
         </div>
 
+        <SimulationBanner focus="playground" />
+
+        {/* 1. Live changes ticker directly below scenario banner */}
+        <LiveChangesTicker items={tickerItems} />
+
+        {/* 2. Hero KPI Sparkline Row */}
+        <HeroKpiSparklineRow rows={heroKpiRows} />
+
         {/* ── Input panel ── */}
         <Card style={{ marginBottom: 24 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, alignItems: "center" }}>
 
             {/* Manual inference */}
             <div>
-              <Label>Single Reading — Manual Input</Label>
+              <Label>Single Station Load — Manual Input</Label>
               <p style={{ fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
-                Enter an aggregate wattage and run all 5 models instantly.
+                Enter the current station load in kW and run all five models instantly.
               </p>
               <div style={{ display: "flex", gap: 10 }}>
                 <input
                   type="number" value={input} onChange={e => setInput(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && runInfer()}
-                  placeholder="e.g. 1250"
+                  placeholder="e.g. 180"
                   style={{
                     flex: 1, padding: "10px 14px", borderRadius: 10,
                     background: "rgba(0,0,0,0.35)", border: `1px solid ${C.border}`,
@@ -229,12 +326,12 @@ export default function InferencePage() {
               </div>
               {/* Quick presets */}
               <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" as const }}>
-                {[["Standby","120"],["Fridge","260"],["Fan","90"],["TV","200"],["AC","1250"],["Geyser","1550"],["All on","3200"]].map(([l,v]) => (
+                {[["Standby","90"],["Research","180"],["Storm","240"],["Life support","140"]].map(([l,v]) => (
                   <button key={l} onClick={() => setInput(v)} style={{
                     padding: "4px 10px", borderRadius: 6, border: `1px solid rgba(0,229,255,0.15)`,
                     background: "transparent", color: C.muted, fontSize: 10, cursor: "pointer",
                     transition: "color 0.2s",
-                  }}>{l} {v}W</button>
+                  }}>{l} {v}kW</button>
                 ))}
               </div>
               {error && <p style={{ color: C.red, fontSize: 11, marginTop: 8 }}>⚠ {error}</p>}
@@ -242,14 +339,14 @@ export default function InferencePage() {
 
             {/* SSE streaming */}
             <div style={{ borderLeft: `1px solid ${C.border}`, paddingLeft: 32 }}>
-              <Label>Live Stream — Simulated Smart Meter</Label>
+              <Label>Live Stream — Weather + Load Simulation</Label>
               <p style={{ fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
-                Backend generates realistic readings every 2s and runs all models continuously via SSE.
+                SSE includes weather, renewable availability, battery SOC, and optimized diesel dispatch.
               </p>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <input
                   type="number" value={baseLoad} onChange={e => setBaseLoad(e.target.value)}
-                  placeholder="Base load (W)"
+                  placeholder="Base load (kW)"
                   style={{
                     width: 130, padding: "10px 14px", borderRadius: 10,
                     background: "rgba(0,0,0,0.35)", border: `1px solid ${C.border}`,
@@ -262,6 +359,20 @@ export default function InferencePage() {
                   color: streaming ? C.red : C.green, fontSize: 12, fontWeight: 700, letterSpacing: "0.08em",
                   border: `1px solid ${streaming ? C.red : C.green}30`, transition: "all 0.2s",
                 }}>{streaming ? "⏹ STOP" : "▶ START STREAM"}</button>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" as const }}>
+                <button onClick={() => setBlizzardMode(!blizzardMode)} style={{
+                  padding: "7px 12px", borderRadius: 8, cursor: "pointer",
+                  background: blizzardMode ? `${C.red}20` : "transparent",
+                  border: `1px solid ${blizzardMode ? C.red : C.border}`,
+                  color: blizzardMode ? C.red : C.muted, fontSize: 10, fontWeight: 700,
+                }}>{blizzardMode ? "● BLIZZARD MODE" : "○ BLIZZARD MODE"}</button>
+                <button onClick={() => setPolarNight(!polarNight)} style={{
+                  padding: "7px 12px", borderRadius: 8, cursor: "pointer",
+                  background: polarNight ? `${C.purple}20` : "transparent",
+                  border: `1px solid ${polarNight ? C.purple : C.border}`,
+                  color: polarNight ? C.purple : C.muted, fontSize: 10, fontWeight: 700,
+                }}>{polarNight ? "● POLAR NIGHT" : "○ POLAR NIGHT"}</button>
               </div>
             </div>
           </div>
@@ -291,29 +402,29 @@ export default function InferencePage() {
             {/* Row 2: RF result + Anomaly + Proba bars */}
             <div className="anim" style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 20, marginBottom: 24 }}>
 
-              {/* RF appliance */}
+                {/* RF load channel */}
               <Card>
-                <Label>RF — Appliance Classification</Label>
+                <Label>RF — Station Load Classification</Label>
                 <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
                   <div style={{
                     width: 60, height: 60, borderRadius: 14, flexShrink: 0,
-                    background: appColor + "15", border: `1px solid ${appColor}30`,
+                    background: loadColor + "15", border: `1px solid ${loadColor}30`,
                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26,
                   }}>
-                    {({"ac":"❄","fridge":"🧊","geyser":"🔥","tv":"📺","washing_machine":"🫧"} as Record<string,string>)[result.rf_label] ?? "⚡"}
+                    {({"heating":"🔥","life_support":"🛟","comms":"📡","labs":"🔬","kitchen_mess":"🍽"} as Record<string,string>)[result.rf_label] ?? "⚡"}
                   </div>
                   <div>
                     <div style={{ fontFamily: "'Orbitron',monospace", fontSize: 18, fontWeight: 700,
-                      color: appColor, textTransform: "capitalize" as const, marginBottom: 4 }}>
+                      color: loadColor, textTransform: "capitalize" as const, marginBottom: 4 }}>
                       {result.rf_label.replace("_", " ")}
                     </div>
-                    <Badge label={`${(result.rf_confidence * 100).toFixed(1)}% confident`} color={appColor} />
+                    <Badge label={`${(result.rf_confidence * 100).toFixed(1)}% confident`} color={loadColor} />
                   </div>
                 </div>
                 {/* All class probabilities */}
                 {probData.map((p: any) => (
                   <ProbBar key={p.name} label={p.name} prob={p.prob}
-                    color={APPLIANCE_COLORS[p.name] ?? C.accent} />
+                    color={LOAD_COLORS[p.name] ?? C.accent} />
                 ))}
               </Card>
 
@@ -329,7 +440,7 @@ export default function InferencePage() {
                     />
                     <p style={{ fontSize: 11, color: C.muted, marginTop: 10, lineHeight: 1.6 }}>
                       {result.is_anomaly
-                        ? "Sudden spike/drop detected. Possible appliance switch or fault."
+                        ? "Sudden spike/drop detected. Possible equipment switch or fault."
                         : "Reading within normal distribution range."}
                     </p>
                   </div>
@@ -355,7 +466,7 @@ export default function InferencePage() {
                     </div>
                   </div>
                   <p style={{ fontSize: 11, color: C.muted, marginTop: 10, lineHeight: 1.6 }}>
-                    {(({ standby: "Low activity — appliances mostly idle.", normal: "Moderate load — typical usage pattern.", peak: "High load — multiple heavy appliances active." } as Record<string,string>)[result.hmm_regime]) ?? ""}
+                    {(({ standby: "Low activity — station loads mostly idle.", normal: "Moderate load — typical station operation.", peak: "High load — multiple critical channels active." } as Record<string,string>)[result.hmm_regime]) ?? ""}
                   </p>
                 </div>
 
@@ -406,7 +517,7 @@ export default function InferencePage() {
               </Card>
 
               <Card>
-                <Label style={{ marginBottom: 16 }}>Appliance Probability Distribution</Label>
+                <Label style={{ marginBottom: 16 }}>Station Load Probability Distribution</Label>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={probData} layout="vertical" barSize={14}>
                     <CartesianGrid stroke="rgba(0,229,255,0.06)" horizontal={false} />
@@ -418,7 +529,7 @@ export default function InferencePage() {
                       formatter={(v: any) => [`${(parseFloat(v) * 100).toFixed(1)}%`, "Probability"]} />
                     <Bar dataKey="prob" radius={[0, 4, 4, 0]}>
                       {probData.map((p: any, i: number) => (
-                        <Cell key={i} fill={APPLIANCE_COLORS[p.name] ?? C.accent} />
+                        <Cell key={i} fill={LOAD_COLORS[p.name] ?? C.accent} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -449,7 +560,7 @@ export default function InferencePage() {
                         <td style={{ padding: "7px 12px", color: row.delta > 200 ? C.red : row.delta < -200 ? C.amber : C.muted }}>
                           {row.delta > 0 ? "+" : ""}{row.delta}W
                         </td>
-                        <td style={{ padding: "7px 12px", color: APPLIANCE_COLORS[row.rf_label] ?? C.accent, textTransform: "capitalize" as const }}>
+                        <td style={{ padding: "7px 12px", color: LOAD_COLORS[row.rf_label] ?? C.accent, textTransform: "capitalize" as const }}>
                           {row.rf_label?.replace("_", " ")}
                         </td>
                         <td style={{ padding: "7px 12px", color: C.text }}>{(row.rf_confidence * 100).toFixed(1)}%</td>

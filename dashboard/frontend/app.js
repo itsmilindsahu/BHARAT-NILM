@@ -9,19 +9,19 @@ document.addEventListener("DOMContentLoaded", () => {
   /* ===================== STATE ===================== */
 
   let allEvents = [];
-  let displayedBill = 1200; // realistic starting bill
+  let renewableShare = 42;
 
   /* ===================== DOM ===================== */
 
   const totalEventsEl   = document.getElementById("totalEvents");
-  const topApplianceEl = document.getElementById("topAppliance");
+  const topLoadEl      = document.getElementById("topLoad");
   const avgConfEl      = document.getElementById("avgConfidence");
-  const billEl         = document.getElementById("monthlyBill");
+  const renewableShareEl = document.getElementById("renewableShare");
   const recommendationsEl = document.getElementById("recommendations");
 
   /* ===================== CHARTS ===================== */
 
-  let applianceChart, energyChart, usageChart, timelineChart;
+  let loadChart, energyChart, usageChart, timelineChart;
 
   initializeCharts();
 
@@ -55,26 +55,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function updateDashboard(events) {
 
-    let applianceCounts = {};
-    let applianceEnergy = {};
+    let loadCounts = {};
+    let loadEnergy = {};
     let usageByHour     = {};
     let confidenceSum   = 0;
 
     events.forEach(e => {
 
       // Counts
-      applianceCounts[e.predicted_appliance] =
-        (applianceCounts[e.predicted_appliance] || 0) + 1;
+      loadCounts[e.load_channel] =
+        (loadCounts[e.load_channel] || 0) + 1;
 
       // Energy
-      applianceEnergy[e.predicted_appliance] =
-        (applianceEnergy[e.predicted_appliance] || 0) + e.delta_power;
+      loadEnergy[e.load_channel] =
+        (loadEnergy[e.load_channel] || 0) + e.delta_power;
 
       // Usage pattern
-      if (!usageByHour[e.predicted_appliance]) {
-        usageByHour[e.predicted_appliance] = Array(24).fill(0);
+      if (!usageByHour[e.load_channel]) {
+        usageByHour[e.load_channel] = Array(24).fill(0);
       }
-      usageByHour[e.predicted_appliance][e.hour]++;
+      usageByHour[e.load_channel][e.hour]++;
 
       confidenceSum += e.confidence;
     });
@@ -86,37 +86,31 @@ document.addEventListener("DOMContentLoaded", () => {
     avgConfEl.innerText =
       (confidenceSum / events.length).toFixed(2);
 
-    topApplianceEl.innerText =
-      Object.keys(applianceEnergy)
-        .reduce((a,b)=>applianceEnergy[a]>applianceEnergy[b]?a:b);
+    topLoadEl.innerText =
+      Object.keys(loadEnergy)
+        .reduce((a,b)=>loadEnergy[a]>loadEnergy[b]?a:b);
 
-    const totalEnergy =
-      Object.values(applianceEnergy).reduce((a,b)=>a+b,0);
-
-    const estimatedBill =
-      (totalEnergy / 1000) * 30 * 6;
-
-    displayedBill += (estimatedBill - displayedBill) * 0.05;
-    billEl.innerText = "₹" + displayedBill.toFixed(0);
+    renewableShare += (42 + Math.random() * 12 - renewableShare) * 0.05;
+    renewableShareEl.innerText = renewableShare.toFixed(0) + "%";
 
     /* ---------- Charts ---------- */
 
-    updateApplianceChart(applianceCounts);
-    updateEnergyChart(applianceEnergy);
+    updateLoadChart(loadCounts);
+    updateEnergyChart(loadEnergy);
     updateUsageChart(usageByHour);
     updateTimelineChart(events);
 
     /* ---------- Recommendations ---------- */
 
-    updateRecommendations(applianceEnergy);
+    updateRecommendations(loadEnergy);
   }
 
   /* ===================== CHART SETUP ===================== */
 
   function initializeCharts() {
 
-    applianceChart = new Chart(
-      document.getElementById("applianceChart"),
+    loadChart = new Chart(
+      document.getElementById("loadChart"),
       {
         type: "doughnut",
         data: { labels: [], datasets: [{ data: [] }] }
@@ -150,10 +144,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* ===================== CHART UPDATES ===================== */
 
-  function updateApplianceChart(counts) {
-    applianceChart.data.labels = Object.keys(counts);
-    applianceChart.data.datasets[0].data = Object.values(counts);
-    applianceChart.update();
+  function updateLoadChart(counts) {
+    loadChart.data.labels = Object.keys(counts);
+    loadChart.data.datasets[0].data = Object.values(counts);
+    loadChart.update();
   }
 
   function updateEnergyChart(energy) {
@@ -168,10 +162,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const colors = ["#22c55e","#38bdf8","#f97316","#ef4444"];
 
     let i = 0;
-    for (const app in usage) {
+    for (const channel in usage) {
       usageChart.data.datasets.push({
-        label: app,
-        data: usage[app],
+        label: channel,
+        data: usage[channel],
         borderColor: colors[i % colors.length],
         tension: 0.35,
         pointRadius: 2
@@ -194,11 +188,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     recommendationsEl.innerHTML = "";
 
-    Object.keys(energy).forEach(app => {
-      if (energy[app] > 6000) {
+    Object.keys(energy).forEach(channel => {
+      if (energy[channel] > 6000) {
         const li = document.createElement("li");
         li.innerText =
-          `${app}: High energy usage detected. Consider reducing peak usage.`;
+          `${channel}: High station load detected. Defer non-essential load if margin is low.`;
         recommendationsEl.appendChild(li);
       }
     });

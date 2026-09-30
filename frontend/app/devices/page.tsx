@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { AreaChart, Area, ResponsiveContainer, Tooltip } from "recharts"
+import { LiveChangesTicker, HeroKpiSparklineRow, useTelemetryTickerTracker } from "../components/ui"
+import { API_URL } from "../lib/api"
 
-const API = "http://127.0.0.1:8000/devices"
+const API = `${API_URL}/devices`
 
 // ─── Palette ──────────────────────────────────────────────
 const C = {
@@ -19,20 +21,17 @@ const C = {
   muted:   "rgba(200,219,232,0.4)",
 }
 
-const APPLIANCE_META: Record<string, { icon: string; color: string; label: string; maxW: number }> = {
-  ac:              { icon: "❄️",  color: "#00e5ff", label: "Air Conditioner",  maxW: 1800 },
-  fridge:          { icon: "🧊",  color: "#b388ff", label: "Refrigerator",     maxW: 250  },
-  fan:             { icon: "💨",  color: "#39ff14", label: "Fan",              maxW: 100  },
-  tv:              { icon: "📺",  color: "#e040fb", label: "Television",       maxW: 220  },
-  geyser:          { icon: "🔥",  color: "#ffb300", label: "Geyser",           maxW: 2000 },
-  washing_machine: { icon: "🫧",  color: "#00bcd4", label: "Washing Machine",  maxW: 800  },
-  microwave:       { icon: "📡",  color: "#ff9800", label: "Microwave",        maxW: 1200 },
-  light:           { icon: "💡",  color: "#ffee58", label: "Light",            maxW: 40   },
-  other:           { icon: "🔌",  color: "#90a4ae", label: "Other",            maxW: 200  },
+const LOAD_CHANNEL_META: Record<string, { icon: string; color: string; label: string; maxW: number }> = {
+  heating:      { icon: "🔥", color: "#ffb300", label: "Heating", maxW: 1800 },
+  life_support: { icon: "🛟", color: "#00e5ff", label: "Life Support", maxW: 400 },
+  comms:        { icon: "📡", color: "#b388ff", label: "Comms", maxW: 250 },
+  labs:         { icon: "🔬", color: "#39ff14", label: "Labs", maxW: 1000 },
+  kitchen_mess: { icon: "🍽", color: "#e040fb", label: "Kitchen-Mess", maxW: 800 },
+  other:        { icon: "🔌", color: "#90a4ae", label: "Other", maxW: 200 },
 }
 
-const ROOMS = ["Living Room","Bedroom","Kitchen","Bathroom","Office","Balcony","Other"]
-const APPLIANCES = Object.keys(APPLIANCE_META)
+const ZONES = ["Dorm", "Lab", "Comms", "Garage", "Powerhouse", "Other"]
+const LOAD_CHANNELS = Object.keys(LOAD_CHANNEL_META)
 
 // ─── Toggle switch ─────────────────────────────────────────
 function Toggle({ on, onChange, size = 48 }: { on: boolean; onChange: () => void; size?: number }) {
@@ -99,7 +98,7 @@ function ScheduleModal({ plug, onClose, onSave }: any) {
   const [onAt,  setOnAt]  = useState(plug.schedule?.on_at  ?? "")
   const [offAt, setOffAt] = useState(plug.schedule?.off_at ?? "")
   const [label, setLabel] = useState(plug.schedule?.label  ?? "")
-  const meta = APPLIANCE_META[plug.appliance] ?? APPLIANCE_META.other
+  const meta = LOAD_CHANNEL_META[plug.load_channel] ?? LOAD_CHANNEL_META.other
 
   return (
     <div style={{ position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.75)",
@@ -166,9 +165,9 @@ function ScheduleModal({ plug, onClose, onSave }: any) {
 // ─── Add plug modal ────────────────────────────────────────
 function AddPlugModal({ onClose, onAdd }: any) {
   const [name,      setName]      = useState("")
-  const [appliance, setAppliance] = useState("other")
-  const [room,      setRoom]      = useState("Living Room")
-  const meta = APPLIANCE_META[appliance]
+  const [loadChannel, setLoadChannel] = useState("other")
+  const [zone, setZone] = useState("Dorm")
+  const meta = LOAD_CHANNEL_META[loadChannel]
 
   return (
     <div style={{ position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.78)",
@@ -187,12 +186,12 @@ function AddPlugModal({ onClose, onAdd }: any) {
           <button onClick={onClose} style={{ background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer" }}>✕</button>
         </div>
 
-        <label style={{ fontSize:10,color:C.muted,letterSpacing:"0.1em",display:"block",marginBottom:8 }}>APPLIANCE TYPE</label>
+        <label style={{ fontSize:10,color:C.muted,letterSpacing:"0.1em",display:"block",marginBottom:8 }}>LOAD CHANNEL</label>
         <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:18 }}>
-          {APPLIANCES.map(a=>{
-            const m=APPLIANCE_META[a]; const sel=appliance===a
+          {LOAD_CHANNELS.map(a=>{
+            const m=LOAD_CHANNEL_META[a]; const sel=loadChannel===a
             return (
-              <button key={a} onClick={()=>setAppliance(a)} style={{
+              <button key={a} onClick={()=>setLoadChannel(a)} style={{
                 padding:"10px 8px",borderRadius:10,cursor:"pointer",
                 border:`1px solid ${sel?m.color+"50":"rgba(255,255,255,0.07)"}`,
                 background:sel?m.color+"15":"transparent",
@@ -210,21 +209,21 @@ function AddPlugModal({ onClose, onAdd }: any) {
 
         <label style={{ fontSize:10,color:C.muted,letterSpacing:"0.1em",display:"block",marginBottom:5 }}>PLUG NAME</label>
         <input value={name} onChange={e=>setName(e.target.value)}
-          placeholder={`e.g. ${meta.label} — Bedroom`}
-          onKeyDown={e=>{ if(e.key==="Enter"&&name.trim()){onAdd(name.trim(),appliance,room);onClose()} }}
+            placeholder={`e.g. ${meta.label} — Dorm`}
+            onKeyDown={e=>{ if(e.key==="Enter"&&name.trim()){onAdd(name.trim(),loadChannel,zone);onClose()} }}
           style={{ width:"100%",padding:"10px 14px",borderRadius:10,marginBottom:16,
             background:"rgba(0,0,0,0.4)",border:`1px solid ${C.border}`,
             color:"#fff",fontSize:13,outline:"none" }}/>
 
-        <label style={{ fontSize:10,color:C.muted,letterSpacing:"0.1em",display:"block",marginBottom:5 }}>ROOM</label>
-        <select value={room} onChange={e=>setRoom(e.target.value)} style={{
+        <label style={{ fontSize:10,color:C.muted,letterSpacing:"0.1em",display:"block",marginBottom:5 }}>ZONE</label>
+        <select value={zone} onChange={e=>setZone(e.target.value)} style={{
           width:"100%",padding:"10px 14px",borderRadius:10,marginBottom:24,
           background:"#0a1525",border:`1px solid ${C.border}`,color:"#fff",fontSize:13,outline:"none",
         }}>
-          {ROOMS.map(r=><option key={r} value={r}>{r}</option>)}
+          {ZONES.map(r=><option key={r} value={r}>{r}</option>)}
         </select>
 
-        <button onClick={()=>{ if(name.trim()){onAdd(name.trim(),appliance,room);onClose()} }}
+        <button onClick={()=>{ if(name.trim()){onAdd(name.trim(),loadChannel,zone);onClose()} }}
           disabled={!name.trim()} style={{
             width:"100%",padding:"13px 0",borderRadius:12,cursor:"pointer",
             background:name.trim()?`linear-gradient(135deg,${C.accent}20,${C.accent}40)`:"rgba(255,255,255,0.04)",
@@ -243,7 +242,7 @@ function AddPlugModal({ onClose, onAdd }: any) {
 function PlugCard({ plug, onToggle, onOpenSchedule, onRename, onDelete }: any) {
   const [renaming,  setRenaming]  = useState(false)
   const [draftName, setDraftName] = useState(plug.name)
-  const meta  = APPLIANCE_META[plug.appliance] ?? APPLIANCE_META.other
+  const meta  = LOAD_CHANNEL_META[plug.load_channel] ?? LOAD_CHANNEL_META.other
   const color = plug.on ? meta.color : "rgba(255,255,255,0.18)"
 
   return (
@@ -289,7 +288,7 @@ function PlugCard({ plug, onToggle, onOpenSchedule, onRename, onDelete }: any) {
               <span style={{ fontSize:10,cursor:"pointer",opacity:0.35 }} onClick={()=>setRenaming(true)}>✏</span>
             </div>
           )}
-          <div style={{ fontSize:10,color:C.muted,marginTop:3 }}>{plug.room} · {meta.label}</div>
+          <div style={{ fontSize:10,color:C.muted,marginTop:3 }}>{plug.zone} · {meta.label}</div>
           {plug.schedule && (
             <div style={{ marginTop:5,display:"inline-flex",alignItems:"center",gap:4,
               padding:"2px 8px",borderRadius:6,
@@ -365,7 +364,7 @@ export default function DevicesPage() {
   const [plugs,        setPlugs]        = useState<any[]>([])
   const [showAdd,      setShowAdd]      = useState(false)
   const [schedPlug,    setSchedPlug]    = useState<any>(null)
-  const [filterRoom,   setFilterRoom]   = useState("All")
+  const [filterZone, setFilterZone] = useState("All")
   const [filterStatus, setFilterStatus] = useState("All")
   const [loading,      setLoading]      = useState(true)
   const ivRef = useRef<any>(null)
@@ -380,13 +379,13 @@ export default function DevicesPage() {
 
   useEffect(() => {
     fetchPlugs()
-    ivRef.current = setInterval(fetchPlugs, 3000)
+    ivRef.current = setInterval(fetchPlugs, 1200)
     return () => clearInterval(ivRef.current)
   }, [fetchPlugs])
 
   const toggle     = async (id: string) => { await fetch(`${API}/${id}/toggle`,{method:"POST"}); fetchPlugs() }
-  const addPlug    = async (name: string, appliance: string, room: string) => {
-    await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,appliance,room})})
+  const addPlug    = async (name: string, load_channel: string, zone: string) => {
+    await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,load_channel,zone})})
     fetchPlugs()
   }
   const renamePlug = async (id: string, name: string) => {
@@ -407,10 +406,67 @@ export default function DevicesPage() {
   const totalWatts  = plugs.filter(p=>p.on).reduce((s,p)=>s+p.watts_now,0)
   const todayCost   = plugs.reduce((s,p)=>s+p.cost_today,0)
   const monthCost   = plugs.reduce((s,p)=>s+p.cost_month,0)
-  const rooms       = ["All",...Array.from(new Set(plugs.map(p=>p.room)))]
+  const zones       = ["All",...Array.from(new Set(plugs.map(p=>p.zone)))]
+
+  const [activeHistory, setActiveHistory] = useState<number[]>([4, 5, 5, 6, 6])
+  const [loadHistory, setLoadHistory] = useState<number[]>([1200, 1450, 1600, 1550, 1620])
+  const [todayCostHistory, setTodayCostHistory] = useState<number[]>([18.2, 18.5, 18.9, 19.1, 19.4])
+  const [monthCostHistory, setMonthCostHistory] = useState<number[]>([420, 421, 422, 423, 424])
+
+  useEffect(() => {
+    if (plugs.length > 0) {
+      setActiveHistory(prev => [...prev.slice(-25), activeCount])
+      setLoadHistory(prev => [...prev.slice(-25), Math.round(totalWatts)])
+      setTodayCostHistory(prev => [...prev.slice(-25), parseFloat(todayCost.toFixed(2))])
+      setMonthCostHistory(prev => [...prev.slice(-25), parseFloat(monthCost.toFixed(2))])
+    }
+  }, [plugs, activeCount, totalWatts, todayCost, monthCost])
+
+  const tickerItems = useTelemetryTickerTracker({
+    "Active Plugs": activeCount,
+    "Plug Load": totalWatts,
+    "Cost Today": todayCost,
+    "Month Cost": monthCost,
+  }, {
+    "Active Plugs": "devices",
+    "Plug Load": "W",
+    "Cost Today": "₹",
+    "Month Cost": "₹",
+  })
+
+  const heroKpiRows = [
+    {
+      label: "Active Plugs",
+      value: `${activeCount}/${plugs.length}`,
+      color: C.green,
+      data: activeHistory,
+      sub: "Energized assets",
+    },
+    {
+      label: "Total Asset Load",
+      value: totalWatts > 0 ? `${totalWatts.toFixed(0)} W` : "0 W",
+      color: C.accent,
+      data: loadHistory,
+      sub: "Active plug draw",
+    },
+    {
+      label: "Cost Today",
+      value: `₹${todayCost.toFixed(2)}`,
+      color: C.amber,
+      data: todayCostHistory,
+      sub: "Aggregated day run",
+    },
+    {
+      label: "Cost This Month",
+      value: `₹${monthCost.toFixed(2)}`,
+      color: C.purple,
+      data: monthCostHistory,
+      sub: "Billing cycle projection",
+    },
+  ]
 
   const visible = plugs
-    .filter(p=>filterRoom==="All"||p.room===filterRoom)
+    .filter(p=>filterZone==="All"||p.zone===filterZone)
     .filter(p=>filterStatus==="All"||(filterStatus==="On"?p.on:!p.on))
 
   return (
@@ -435,7 +491,7 @@ export default function DevicesPage() {
 
         {/* Header */}
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",
-          padding:"24px 0 32px",borderBottom:`1px solid ${C.border}`,marginBottom:32 }}>
+          padding:"24px 0 32px",borderBottom:`1px solid ${C.border}`,marginBottom:24 }}>
           <div>
             <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:6 }}>
               <a href="/" style={{ fontSize:11,color:C.muted,textDecoration:"none" }}>← HOME</a>
@@ -458,31 +514,11 @@ export default function DevicesPage() {
           }}>+ ADD PLUG</button>
         </div>
 
-        {/* KPI strip */}
-        <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16,marginBottom:28 }}>
-          {[
-            { label:"Active Plugs",    val:`${activeCount}/${plugs.length}`, color:C.green  },
-            { label:"Total Load",      val:totalWatts>0?`${totalWatts.toFixed(0)}W`:"0W",   color:C.accent },
-            { label:"Cost Today",      val:`₹${todayCost.toFixed(2)}`,       color:C.amber  },
-            { label:"Cost This Month", val:`₹${monthCost.toFixed(2)}`,       color:C.purple },
-          ].map((k,i)=>(
-            <div key={i} style={{
-              background:C.surface,border:`1px solid ${k.color}20`,
-              borderRadius:14,padding:"18px 20px",
-              position:"relative" as const,overflow:"hidden",
-              animation:`fadeUp 0.4s ease ${i*0.06}s both`,
-            }}>
-              <div style={{ position:"absolute",top:0,left:0,right:0,height:2,
-                background:`linear-gradient(90deg,transparent,${k.color},transparent)` }} />
-              <div style={{ fontSize:10,color:C.muted,letterSpacing:"0.1em",marginBottom:8 }}>
-                {k.label.toUpperCase()}
-              </div>
-              <div style={{ fontFamily:"'Orbitron',monospace",fontSize:26,fontWeight:700,color:k.color }}>
-                {k.val}
-              </div>
-            </div>
-          ))}
-        </div>
+        {/* 1. Live changes ticker directly below header */}
+        <LiveChangesTicker items={tickerItems} />
+
+        {/* 2. Hero KPI Sparkline Row */}
+        <HeroKpiSparklineRow rows={heroKpiRows} />
 
         {/* Filters */}
         <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:24,flexWrap:"wrap" as const }}>
@@ -497,12 +533,12 @@ export default function DevicesPage() {
             }}>{s}</button>
           ))}
           <div style={{ width:1,height:20,background:C.border }} />
-          {rooms.map(r=>(
-            <button key={r} onClick={()=>setFilterRoom(r)} style={{
+          {zones.map(r=>(
+            <button key={r} onClick={()=>setFilterZone(r)} style={{
               padding:"5px 14px",borderRadius:8,cursor:"pointer",
-              background:filterRoom===r?"rgba(255,255,255,0.07)":"transparent",
-              border:`1px solid ${filterRoom===r?"rgba(255,255,255,0.2)":"rgba(255,255,255,0.06)"}`,
-              color:filterRoom===r?"#fff":C.muted,
+              background:filterZone===r?"rgba(255,255,255,0.07)":"transparent",
+              border:`1px solid ${filterZone===r?"rgba(255,255,255,0.2)":"rgba(255,255,255,0.06)"}`,
+              color:filterZone===r?"#fff":C.muted,
               fontSize:11,transition:"all 0.2s",
             }}>{r}</button>
           ))}

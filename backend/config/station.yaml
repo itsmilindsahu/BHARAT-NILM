@@ -1,0 +1,37 @@
+# Example override for polar_ems.config.load_config().
+#
+#   python -m polar_ems.cli run winter --config config/station.yaml
+#
+# Only the keys you list here override the defaults in polar_ems/config.py; everything
+# else keeps its built-in value. This example models a smaller station on a slightly
+# milder (sub-Antarctic) site with a single, larger genset instead of two small ones.
+
+site:
+  name: "Example sub-Antarctic station"
+  lat: -54.28
+  lon: -36.51
+
+pv:
+  kwp: 80.0
+  inverter_kw: 75.0
+
+wind:
+  rated_kw: 60.0
+
+battery:
+  capacity_kwh: 400.0
+  max_kw: 100.0
+
+generators:
+  - name: DG1
+    rated_kw: 180.0
+    min_load_frac: 0.25
+    startup_cost: 10.0
+
+load:
+  base_kw: 35.0
+  occupancy_kw_summer: 20.0
+  occupancy_kw_winter: 6.0
+
+econ:
+  fuel_cost_per_l: 2.4

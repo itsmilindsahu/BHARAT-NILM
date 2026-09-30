@@ -17,7 +17,7 @@
 
 <header>
   <h1>Bharat-NILM</h1>
-  <p>Live appliance-level energy intelligence</p>
+  <p>Live station load intelligence</p>
 
   <div class="top-controls">
     <label>Inference Model</label>
@@ -42,9 +42,9 @@
     </div>
 
     <div class="kpi tooltip">
-      <span id="topAppliance">–</span>
-      <label>Top Appliance</label>
-      <div class="tooltip-text">Most active appliance</div>
+      <span id="topLoad">–</span>
+      <label>Dominant Load Channel</label>
+      <div class="tooltip-text">Most active station load channel</div>
     </div>
 
     <div class="kpi tooltip">
@@ -54,16 +54,16 @@
     </div>
 
     <div class="kpi tooltip">
-      <span id="monthlyBill">–</span>
-      <label>Predicted Monthly Bill (₹)</label>
-      <div class="tooltip-text">Estimated electricity bill</div>
+      <span id="renewableShare">–</span>
+      <label>Renewable Share</label>
+      <div class="tooltip-text">Share of load met by wind and solar</div>
     </div>
   </section>
 
   <!-- Charts -->
   <section class="charts">
     <div class="panel">
-      <h3>Appliance-wise Energy Consumption</h3>
+      <h3>Load Channel Energy Consumption</h3>
       <canvas id="energyChart"></canvas>
     </div>
 
@@ -75,8 +75,8 @@
 
   <section class="charts">
     <div class="panel">
-      <h3>Appliance Distribution</h3>
-      <canvas id="applianceChart"></canvas>
+      <h3>Station Load Distribution</h3>
+      <canvas id="loadChart"></canvas>
     </div>
 
     <div class="panel">
@@ -97,7 +97,7 @@
       <thead>
         <tr>
           <th>ID</th>
-          <th>Appliance</th>
+          <th>Load Channel</th>
           <th>Δ Power (W)</th>
           <th>Hour</th>
           <th>Confidence</th>

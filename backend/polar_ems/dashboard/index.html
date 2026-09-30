@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Polar EMS — Microgrid Control</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0B1420; --panel:#101E30; --panel2:#0D1928; --line:#1B2E45; --line2:#243b58;
+  --text:#DCE8F2; --text2:#8CA0B5; --text3:#5C7189;
+  --ice:#7FB8D9; --ice-dim:#3E6A85;
+  --amber:#E8A33D; --amber-dim:#7A5A24;
+  --green:#5FBF8F; --green-dim:#2E5D45;
+  --red:#E0615C; --red-dim:#6B2E2C;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --r:3px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;}
+body{font-size:14px;line-height:1.45;}
+::selection{background:var(--ice-dim);color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--panel2)}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px}
+
+.mono{font-family:var(--mono)}
+.dim{color:var(--text2)}
+.dim2{color:var(--text3)}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- header ---------- */
+header{
+  display:flex; align-items:center; gap:20px;
+  padding:12px 18px; border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,var(--panel2),var(--bg));
+  position:sticky; top:0; z-index:50;
+}
+.brand{display:flex; align-items:baseline; gap:10px; margin-right:8px}
+.brand-mark{
+  width:9px;height:9px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 8px var(--green); flex:none;
+}
+.brand-mark.warn{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.brand-mark.bad{background:var(--red);box-shadow:0 0 8px var(--red)}
+.brand h1{font-size:14px;font-weight:600;letter-spacing:.02em;margin:0;font-family:var(--mono)}
+.brand .site{font-size:11px;color:var(--text3)}
+.clock{font-family:var(--mono);font-size:13px;color:var(--text2);white-space:nowrap}
+.clock b{color:var(--text);font-weight:600}
+.sun-badge{
+  font-size:11px; padding:3px 8px; border-radius:20px; border:1px solid var(--line2);
+  color:var(--text2); white-space:nowrap; font-family:var(--mono);
+}
+header .spacer{flex:1}
+.scenario-select{display:flex; align-items:center; gap:8px}
+select, button{
+  font-family:var(--sans); font-size:12.5px; color:var(--text);
+  background:var(--panel); border:1px solid var(--line2); border-radius:var(--r);
+  padding:6px 10px; cursor:pointer;
+}
+select:hover, button:hover{border-color:var(--ice-dim)}
+button:active{transform:translateY(1px)}
+button.primary{background:var(--ice-dim); border-color:var(--ice); color:#fff; font-weight:600}
+button.ghost{background:transparent}
+button:disabled{opacity:.4;cursor:not-allowed}
+.playbar{display:flex; align-items:center; gap:6px}
+.playbar button{padding:6px 9px; font-family:var(--mono)}
+.speedlabel{font-family:var(--mono); font-size:11px; color:var(--text2); width:34px; text-align:right}
+
+/* ---------- layout ---------- */
+.wrap{display:grid; grid-template-columns:280px 1fr 320px; gap:1px; background:var(--line);
+  min-height:calc(100vh - 53px);}
+.col{background:var(--bg); display:flex; flex-direction:column; min-width:0;}
+.rail-left, .rail-right{overflow-y:auto; max-height:calc(100vh - 53px)}
+.center{overflow-y:auto; max-height:calc(100vh - 53px)}
+
+.panel{border-bottom:1px solid var(--line); padding:14px 16px;}
+.panel:last-child{border-bottom:none}
+.panel h2{
+  font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--text3); margin:0 0 12px 0;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.panel h2 .h2-right{font-weight:500; text-transform:none; letter-spacing:0; color:var(--text3)}
+
+/* ---------- scenario banner ---------- */
+.scenario-banner{
+  padding:10px 16px; background:var(--panel2); border-bottom:1px solid var(--line);
+  font-size:12.5px; color:var(--text2);
+}
+.scenario-banner b{color:var(--text); font-weight:600}
+
+/* ---------- vitals ---------- */
+.vitals-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+.vital{
+  border:1px solid var(--line); border-radius:var(--r); padding:9px 10px; background:var(--panel);
+}
+.vital .lbl{font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:.04em; font-family:var(--mono)}
+.vital .val{font-family:var(--mono); font-size:19px; font-weight:600; margin-top:3px}
+.vital .val small{font-size:11px; font-weight:500; color:var(--text2)}
+.vital.full{grid-column:1/-1}
+
+/* ---------- soc bar ---------- */
+.soc-shell{
+  height:22px; border-radius:4px; background:var(--panel2); border:1px solid var(--line2);
+  position:relative; overflow:hidden; margin-top:6px;
+}
+.soc-fill{height:100%; background:linear-gradient(90deg,var(--ice-dim),var(--ice)); transition:width .4s ease;}
+.soc-band{position:absolute; top:0; bottom:0; width:2px; background:var(--text3); opacity:.5}
+.soc-label{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-family:var(--mono); font-size:11px; font-weight:600; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.6)}
+
+/* ---------- power flow ---------- */
+.flow{display:flex; flex-direction:column; gap:6px}
+.flow-row{
+  display:grid; grid-template-columns:20px 1fr auto; align-items:center; gap:8px;
+  padding:6px 8px; border-radius:var(--r); border:1px solid var(--line);
+}
+.flow-row .dot{width:8px;height:8px;border-radius:50%}
+.flow-row .name{font-size:12px; color:var(--text2)}
+.flow-row .kw{font-family:var(--mono); font-weight:600; font-size:13px}
+.flow-row .bar{grid-column:1/-1; height:4px; background:var(--panel2); border-radius:2px; overflow:hidden; margin-top:2px}
+.flow-row .bar i{display:block; height:100%; border-radius:2px}
+
+/* ---------- alerts ---------- */
+.alert{
+  border:1px solid var(--line2); border-left:3px solid var(--text3); border-radius:var(--r);
+  padding:8px 10px; margin-bottom:8px; background:var(--panel);
+}
+.alert.warning{border-left-color:var(--amber)}
+.alert.critical{border-left-color:var(--red); background:rgba(224,97,92,.06)}
+.alert.info{border-left-color:var(--ice-dim)}
+.alert .head{display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+.alert .chan{font-family:var(--mono); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em}
+.alert.warning .chan{color:var(--amber)}
+.alert.critical .chan{color:var(--red)}
+.alert.info .chan{color:var(--ice)}
+.alert .age{font-size:10px; color:var(--text3); font-family:var(--mono); white-space:nowrap}
+.alert .msg{font-size:12px; color:var(--text2); margin-top:4px; line-height:1.4}
+.empty-state{color:var(--text3); font-size:12px; padding:10px 0; text-align:center; border:1px dashed var(--line2); border-radius:var(--r)}
+
+/* ---------- controls ---------- */
+.ctl-row{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 0; border-bottom:1px solid var(--line)}
+.ctl-row:last-child{border-bottom:none}
+.ctl-row .name{font-size:12.5px}
+.seg{display:flex; border:1px solid var(--line2); border-radius:var(--r); overflow:hidden}
+.seg button{border:none; border-radius:0; padding:4px 9px; font-size:11px; background:var(--panel)}
+.seg button.on{background:var(--ice-dim); color:#fff}
+.seg button + button{border-left:1px solid var(--line2)}
+.fault-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:8px}
+.fault-grid button{font-size:11px; padding:7px 6px; text-align:left}
+.link-toggle{display:flex; align-items:center; gap:8px}
+.switch{width:34px;height:18px;border-radius:10px;background:var(--line2);position:relative;cursor:pointer;flex:none;border:1px solid var(--line2)}
+.switch.on{background:var(--green-dim); border-color:var(--green)}
+.switch i{position:absolute;top:1px;left:1px;width:14px;height:14px;border-radius:50%;background:var(--text2);transition:left .15s ease}
+.switch.on i{left:17px;background:var(--green)}
+
+/* ---------- chart panels ---------- */
+.chart-panel{padding:14px 18px; border-bottom:1px solid var(--line)}
+.chart-panel h2{margin-bottom:8px}
+.chart-legend{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px}
+.leg{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text2); font-family:var(--mono)}
+.leg i{width:9px;height:9px;border-radius:2px; display:inline-block}
+svg text{font-family:var(--mono); fill:var(--text3);}
+.gridline{stroke:var(--line); stroke-width:1}
+.axisline{stroke:var(--line2); stroke-width:1}
+
+/* ---------- KPI table ---------- */
+.kpi-table{width:100%; border-collapse:collapse; font-size:11.5px; table-layout:fixed}
+.kpi-table th{
+  text-align:right; font-family:var(--mono); font-weight:500; color:var(--text3);
+  font-size:10px; padding:5px 4px; border-bottom:1px solid var(--line2); white-space:nowrap;
+}
+.kpi-table th:first-child{text-align:left; width:34%}
+.kpi-table td{text-align:right; padding:6px 4px; border-bottom:1px solid var(--line); font-family:var(--mono); white-space:nowrap}
+.kpi-table td:first-child{text-align:left; font-family:var(--sans); color:var(--text2); white-space:normal; line-height:1.25}
+.kpi-table tr.hero td{color:var(--text); font-weight:600}
+.kpi-table .save-pos{color:var(--green)}
+.kpi-table .save-neg{color:var(--red)}
+
+/* ---------- notes / mode strip ---------- */
+.mode-strip{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.pill{
+  font-family:var(--mono); font-size:10.5px; padding:3px 9px; border-radius:20px;
+  border:1px solid var(--line2); color:var(--text2);
+}
+.pill.on{border-color:var(--ice); color:var(--ice)}
+.pill.warn{border-color:var(--amber); color:var(--amber)}
+.pill.bad{border-color:var(--red); color:var(--red)}
+.pill.good{border-color:var(--green); color:var(--green)}
+.note-line{font-size:12px; color:var(--text2); padding:3px 0}
+.note-line::before{content:'›'; color:var(--ice-dim); margin-right:6px}
+
+footer{padding:14px 18px; font-size:11px; color:var(--text3); border-top:1px solid var(--line); font-family:var(--mono)}
+
+@media (max-width: 1100px){
+  .wrap{grid-template-columns:1fr}
+  .rail-left,.rail-right,.center{max-height:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="brand-mark" id="statusDot"></span>
+    <h1>POLAR-EMS</h1>
+    <span class="site dim2" id="siteName">—</span>
+  </div>
+  <span class="clock" id="clock">—</span>
+  <span class="sun-badge" id="sunBadge">—</span>
+  <div class="spacer"></div>
+  <div class="scenario-select">
+    <select id="scenarioSelect"></select>
+    <button id="applyScenario">Run scenario</button>
+  </div>
+  <div class="playbar">
+    <button id="btnPlay" class="mono">▶</button>
+    <button id="btnStep" class="mono">+1h</button>
+    <input type="range" id="speedSlider" min="0" max="4" step="1" value="1" style="width:70px">
+    <span class="speedlabel mono" id="speedLabel">1×</span>
+  </div>
+</header>
+
+<div class="scenario-banner" id="scenarioBanner">Loading scenario…</div>
+
+<div class="wrap">
+  <div class="col rail-left" id="railLeft"></div>
+  <div class="col center" id="centerCol"></div>
+  <div class="col rail-right" id="railRight"></div>
+</div>
+
+<footer>
+  polar-ems · XGBoost forecasting + MILP dispatch (OR-Tools) + IsolationForest anomaly detection · simulated station, synthetic weather
+</footer>
+
+<script>
+window.STATE = { snapshot: null, meta: null, playing: false, genCount: 2 };
+</script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -35,12 +35,12 @@ async def serve_index():
 # ESP32 SMART PLUG SIMULATION
 # =========================
 
-APPLIANCES = {
-    "Fan": (60, 120),
-    "Light": (20, 40),
-    "AC": (1200, 1800),
-    "Fridge": (100, 250),
-    "Mixer": (300, 600)
+LOAD_CHANNELS = {
+    "Heating": (900, 1800),
+    "Life Support": (180, 300),
+    "Comms": (60, 140),
+    "Labs": (300, 800),
+    "Kitchen-Mess": (250, 600)
 }
 
 async def esp32_simulator(websocket: WebSocket):
@@ -51,16 +51,16 @@ async def esp32_simulator(websocket: WebSocket):
     event_id = 0
 
     while True:
-        appliance = random.choice(list(APPLIANCES.keys()))
+        load_channel = random.choice(list(LOAD_CHANNELS.keys()))
         delta_power = random.randint(
-            APPLIANCES[appliance][0],
-            APPLIANCES[appliance][1]
+            LOAD_CHANNELS[load_channel][0],
+            LOAD_CHANNELS[load_channel][1]
         )
         hour = random.randint(0, 23)
 
         event = {
             "event_id": event_id,
-            "predicted_appliance": appliance,
+            "load_channel": load_channel,
             "delta_power": delta_power,
             "hour": hour,
             "confidence": round(random.uniform(0.85, 0.98), 2)
