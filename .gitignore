@@ -11,10 +11,7 @@ build/
 venv/
 env/
 
-# Backend model cache & DB (re-trained at runtime)
-*.joblib
-backend/models/*.joblib
-backend/models/**/*.joblib
+# Backend database & temporary files
 backend/data/*.sqlite
 backend/data/*.jsonl
 SIH/

@@ -305,7 +305,18 @@ def train_bundle(cfg: StationConfig, seed: int = 42, verbose: bool = True) -> Fo
 
 
 def load_or_train(cfg: StationConfig, seed: int = 42, verbose: bool = True, force: bool = False) -> ForecastBundle:
-    # Allow MODEL_DIR env var to override config (used by Render / cloud deployments)
+    # 1. Check pre-bundled model in repo (backend/models/)
+    bundled_path = Path(__file__).resolve().parent.parent / "models" / f"forecast_bundle_seed{seed}.joblib"
+    if bundled_path.exists() and not force:
+        try:
+            if verbose:
+                print(f"Loading pre-bundled models from {bundled_path} ...", flush=True)
+            return ForecastBundle.load(bundled_path)
+        except Exception as exc:
+            if verbose:
+                print(f"Bundled model load failed ({exc}); falling back.")
+
+    # 2. Check MODEL_DIR env var or cfg.forecast.model_dir
     model_dir = os.environ.get("MODEL_DIR", cfg.forecast.model_dir)
     path = Path(model_dir) / f"forecast_bundle_seed{seed}.joblib"
     Path(model_dir).mkdir(parents=True, exist_ok=True)

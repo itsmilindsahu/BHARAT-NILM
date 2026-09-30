@@ -148,6 +148,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def startup_event():
+    threading.Thread(target=get_world, daemon=True).start()
+
 if _HAS_DEVICES:
     app.include_router(devices_router, prefix="/devices")
 
